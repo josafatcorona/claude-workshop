@@ -993,6 +993,23 @@ exit 0</code><button class="copy-btn">Copiar</button></pre>
                     </div>
                 </div>
 
+                <div class="warning-box">
+                    <strong>⚠️ SessionEnd tiene prisa: si tarda, lo cancelan.</strong>
+                    <p>El hook corre mientras el proceso se está cerrando. Si el proceso muere antes de que termine, Claude Code lo aborta:</p>
+                    <pre><code>SessionEnd hook [.../session-end.sh] failed: Hook cancelled</code><button class="copy-btn">Copiar</button></pre>
+                    <p>Se ve sobre todo con subcomandos efímeros como <code>claude mcp list</code>, que terminan en unos segundos. Regla práctica: <strong>un <code>SessionEnd</code> debe medirse en milisegundos</strong>. El error típico es procesar el log línea a línea:</p>
+                    <pre><code># ❌ un proceso jq por línea — 7.8s con 3k líneas, el hook no llega a terminar
+while IFS= read -r line; do echo "$line" | jq -r '.tool'; done &lt; "$ACTIONS_LOG"
+
+# ✅ un solo proceso jq para todo el fichero — 0.02s con el mismo fichero
+jq -r '.tool // empty' "$ACTIONS_LOG"</code><button class="copy-btn">Copiar</button></pre>
+                    <p>Mide el tuyo antes de darlo por bueno: <code>time (echo '{"session_id": "test123"}' | .claude/hooks/session-end.sh)</code></p>
+                </div>
+
+                <div class="info-box">
+                    <strong>📎 Depende del Tema 4:</strong> este resumen lee <code>.claude/logs/actions.jsonl</code>, que escribe <code>log-action.sh</code>. Ese hook debe usar <code>jq -c -n</code>: sin <code>-c</code> el JSON sale indentado, el fichero deja de ser JSONL y dos <code>PostToolUse</code> concurrentes (subagents del Tema 7) se interleavan hasta romper el parseo con <code>parse error: Expected separator between values</code>.
+                </div>
+
                 <h2>✅ Checklist de Finalización</h2>
                 <ul class="checklist">
                     <li><input type="checkbox" data-topic="5"> Hook session-start.sh creado</li>

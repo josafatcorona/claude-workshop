@@ -230,7 +230,9 @@ TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 mkdir -p .claude/logs
 
 # Crear entrada de log
-LOG_ENTRY=$(jq -n \
+# -c es obligatorio: sin él jq imprime el JSON indentado en varias líneas,
+# el fichero deja de ser JSONL y dos hooks concurrentes se interleavan
+LOG_ENTRY=$(jq -c -n \
     --arg ts "$TIMESTAMP" \
     --arg tool "$TOOL_NAME" \
     --argjson input "$TOOL_INPUT" \
@@ -290,7 +292,25 @@ Actualiza settings.json con todos los hooks:
 ```bash
 # Ver logs después de algunas acciones
 tail -f .claude/logs/actions.jsonl
+
+# Cada acción debe ocupar exactamente una línea
+wc -l .claude/logs/actions.jsonl
 ```
+
+**⚠️ Una línea por acción, no es cosmético.** El `-c` de `jq` hace tres cosas a la vez:
+
+1. `wc -l` y `jq -r '.tool' actions.jsonl` cuentan acciones de verdad, no líneas sueltas.
+2. El `echo ... >>` es **atómico** mientras la entrada quepa en un bloque (<4 KB). Con
+   subagents en paralelo (Tema 7) varios `PostToolUse` escriben a la vez; con entradas
+   multilínea se interleavan y el fichero queda así:
+   ```
+   "tool": "Read",
+   "tool": "Read",
+   "input": {
+   "input": {
+   ```
+   A partir de ahí `jq` corta con `parse error: Expected separator between values`.
+3. El resumen del Tema 5 lee este fichero — si no es JSONL real, sale vacío.
 
 ---
 

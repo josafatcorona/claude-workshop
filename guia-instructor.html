@@ -1415,6 +1415,10 @@ tail -1 .claude/logs/notifications.log</code></pre>
                     </div>
 
                     <div class="instructor-note">
+                        <p><strong>⚠️ Fallo que van a ver en clase — <code>Hook cancelled</code>:</strong> si alguien corre <code>claude mcp list</code> (Tema 9) con el <code>SessionEnd</code> ya configurado, verá <code>SessionEnd hook [...] failed: Hook cancelled</code>. No es un error de configuración: el subcomando termina en ~5s y aborta el hook si este tarda más. Causa habitual: procesar <code>actions.jsonl</code> con un <code>jq</code> por línea (7.8s con 3k líneas) en vez de un solo <code>jq</code> sobre el fichero (0.02s). Diagnóstico en una línea: <code>time (echo '{"session_id":"t"}' | .claude/hooks/session-end.sh)</code> — si eso tarda más que el proceso que lo dispara, el hook nunca termina. Enlázalo con el <code>jq -c</code> del Tema 4: sin <code>-c</code> el log no es JSONL, el resumen sale vacío y los subagents del Tema 7 lo corrompen al escribir en paralelo.</p>
+                    </div>
+
+                    <div class="instructor-note">
                         <p><strong>💡 Por qué importa esta demo:</strong> a diferencia de PreToolUse/PostToolUse (Tema 4), SessionStart y SessionEnd solo disparan de verdad al abrir/cerrar Claude Code — simularlos con <code>echo | script.sh</code> deja probar la lógica del script sin reiniciar sesiones en vivo. Al final, sí abre una sesión real una vez para mostrar que el JSON de sesión se crea y se completa solo.</p>
                     </div>
 

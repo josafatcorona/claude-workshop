@@ -167,8 +167,10 @@ update_session_record() {
 generate_session_summary() {
     ACTIONS_LOG="$LOG_DIR/actions.jsonl"
     if [[ -f "$ACTIONS_LOG" ]]; then
-        TOTAL_ACTIONS=$(wc -l < "$ACTIONS_LOG")
-        TOOLS_USED=$(jq -r '.tool' "$ACTIONS_LOG" | sort | uniq -c | sort -rn)
+        # Un solo proceso jq para todo el fichero (ver nota tras el script)
+        TOOL_LIST=$(jq -r '.tool // empty' "$ACTIONS_LOG" 2>/dev/null)
+        TOTAL_ACTIONS=$(printf '%s\n' "$TOOL_LIST" | grep -c .)
+        TOOLS_USED=$(printf '%s\n' "$TOOL_LIST" | sort | uniq -c | sort -rn)
         
         echo "=== Resumen de Sesión ==="
         echo "Total de acciones: $TOTAL_ACTIONS"
@@ -209,6 +211,31 @@ persist_state
 echo "=== Sesión $SESSION_ID finalizada ==="
 
 exit 0
+```
+
+**⚠️ SessionEnd tiene prisa: si tarda, lo cancelan.** El hook corre mientras el proceso
+se está cerrando. Si el proceso muere antes de que termine, Claude Code lo aborta con:
+
+```
+SessionEnd hook [.../session-end.sh] failed: Hook cancelled
+```
+
+Esto se ve sobre todo con subcomandos efímeros como `claude mcp list`, que terminan en
+unos segundos. Regla práctica: **un `SessionEnd` debe medirse en milisegundos.** El error
+típico es procesar el log línea a línea:
+
+```bash
+# ❌ un proceso jq por línea — 7.8s con 3k líneas, el hook no llega a terminar
+while IFS= read -r line; do echo "$line" | jq -r '.tool'; done < "$ACTIONS_LOG"
+
+# ✅ un solo proceso jq para todo el fichero — 0.02s con el mismo fichero
+jq -r '.tool // empty' "$ACTIONS_LOG"
+```
+
+Mide siempre el tuyo antes de darlo por bueno:
+
+```bash
+time (echo '{"session_id": "test123"}' | .claude/hooks/session-end.sh)
 ```
 
 **Verificación:**
