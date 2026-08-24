@@ -146,10 +146,3 @@ curso-claude-code/
 └── tema-15-arquitectura.md      # Arquitectura Completa
 ```
 
-## Autor
-
-Generado con Claude Code (Opus 4.5) para Wise Athena.
-
-## Licencia
-
-Uso interno - Wise Athena Team
