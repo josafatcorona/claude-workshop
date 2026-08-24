@@ -1323,53 +1323,74 @@ Guarda reporte en output/report_{{file}}.md
                 <p class="meta">Ejercicio 8 - 20 minutos</p>
 
                 <h2>🎯 Objetivo</h2>
-                <p>Configurar equipos de agents que colaboran entre sí mediante comunicación peer-to-peer, compartiendo resultados y coordinando trabajo complejo.</p>
+                <p>Configurar un equipo de agents especializados que se pasan trabajo por etapas, y entender exactamente qué rutas de comunicación existen entre ellos —y cuáles no.</p>
 
                 <h2>📖 Contexto</h2>
-                <p>Mientras los subagents del Tema 7 son <strong>"ejecutores"</strong> que reportan a un orquestador, los Agent Teams son <strong>"colaboradores"</strong> que se comunican entre sí. Esto permite arquitecturas más flexibles donde un agent puede solicitar ayuda de otro sin pasar por el agente principal.</p>
+                <p>Los subagents del Tema 7 son <strong>"ejecutores"</strong>: cada uno hace su tarea y reporta. Un Agent Team va un paso más allá: varios agents especializados encadenados en un pipeline de N etapas, cada uno con su propio modelo, sus propias herramientas y su propia ventana de contexto.</p>
 
                 <div class="info-box">
                     <strong>Diferencia clave:</strong>
                     <ul>
-                        <li><strong>Tema 7 (Subagents):</strong> Todo flujo pasa por el agente principal como orquestador</li>
-                        <li><strong>Tema 8 (Agent Teams):</strong> Los agents <strong>se comunican directamente entre sí</strong></li>
+                        <li><strong>Tema 7 (Subagents):</strong> delegación puntual — "analiza esto y dime"</li>
+                        <li><strong>Tema 8 (Agent Teams):</strong> un flujo con etapas, donde el resultado de cada agent es la entrada del siguiente</li>
                     </ul>
                 </div>
 
                 <h2>📚 Conceptos Clave</h2>
                 <ul>
-                    <li><strong>Agent Team:</strong> Conjunto de agents que pueden comunicarse directamente</li>
-                    <li><strong>SendMessage:</strong> Herramienta para enviar mensajes entre agents</li>
-                    <li><strong>Peer-to-Peer:</strong> Comunicación directa sin orquestador central</li>
-                    <li><strong>Handoff:</strong> Transferencia de tarea de un agent a otro</li>
-                    <li><strong>ListAgents:</strong> Descubrir agents disponibles en el team</li>
+                    <li><strong>Agent Team:</strong> conjunto de agents especializados que colaboran en un mismo flujo</li>
+                    <li><strong>SendMessage:</strong> herramienta para enviar mensajes a un agent alcanzable</li>
+                    <li><strong>Coordinador:</strong> el agente principal, que releva el payload de una etapa a la siguiente</li>
+                    <li><strong>Handoff:</strong> transferencia de una tarea completa (con su contexto) de un agent a otro</li>
+                    <li><strong>ListAgents:</strong> descubrir qué agents son alcanzables ahora mismo</li>
                 </ul>
 
                 <div class="warning-box">
-                    <strong>⚠️ Nota previa: la sintaxis real de <code>SendMessage</code></strong>
-                    <p>La firma real de la herramienta es <code>{"to": "...", "summary": "...", "message": "..."}</code> — y <strong><code>message</code> es un <em>string</em>, no un objeto</strong>.</p>
-                    <p>Los ejemplos de este tema muestran objetos JSON porque hacen visible el <em>protocolo</em>: qué campos viajan y cuáles no se pueden omitir. Pero al ejecutarlos hay que serializar:</p>
+                    <strong>⚠️ Nota previa: cómo se comunican los agents de verdad</strong>
+                    <p>Léelo antes de escribir el primer agent. Estas cinco reglas evitan el 90% de los tropiezos del ejercicio.</p>
+
+                    <p><strong>1. <code>message</code> es un string, no un objeto.</strong> La firma real es <code>{"to": "...", "summary": "...", "message": "..."}</code>, así que un payload JSON hay que serializarlo:</p>
                     <pre><code>SendMessage({
-  to: "transformer",
-  summary: "1000 rows extraidos, listos para transformar",
+  to: "a18048adb026a856f",
+  summary: "12 filas extraidas, listas para transformar",
   message: JSON.stringify({
     action: "START_TRANSFORM",
     data_file: "/tmp/extracted_data.csv",
-    row_count: 1000
+    row_count: 12
   })
 })</code><button class="copy-btn">Copiar</button></pre>
                     <table>
                         <tr><th>Campo</th><th>Tipo</th><th>Para qué sirve</th></tr>
-                        <tr><td><code>to</code></td><td>string</td><td>Nombre del agent destino (o <code>"main"</code> para la conversación principal)</td></tr>
+                        <tr><td><code>to</code></td><td>string</td><td><code>agentId</code> del destino (o <code>"main"</code> para la conversación principal)</td></tr>
                         <tr><td><code>message</code></td><td>string</td><td>El contenido: JSON serializado, o prosa</td></tr>
                         <tr><td><code>summary</code></td><td>string</td><td>5-10 palabras; el preview de una línea que ve el usuario en la UI</td></tr>
                     </table>
                     <p>En la práctica <strong>prosa estructurada funciona igual de bien que JSON</strong> — el receptor es un modelo, no un parser. Usamos JSON aquí porque impone disciplina.</p>
+
+                    <p><strong>2. El <code>agentId</code> es la dirección, no el nombre del type.</strong> <code>extractor</code> es el nombre de una <em>definición</em>; la dirección de una <em>instancia</em> es el id que devuelve el spawn:</p>
+                    <pre><code>SendMessage({to: "transformer", ...})       → No agent named 'transformer' is reachable
+SendMessage({to: "a18048adb026a856f", ...}) → Resuming agent a18048a   ✓</code></pre>
+                    <p>Fíjate en <code>Resuming</code>: un agent que ya terminó <strong>sigue siendo reanudable</strong>. Eso es lo que hace viable el pipeline.</p>
+
+                    <p><strong>3. Los subagents hermanos no son peers entre sí.</strong> Los cuatro agents que lanzarás son hijos del agente principal, no peers: un <code>SendMessage</code> de uno a otro falla con <code>"no reachable"</code>. El <strong>peer-to-peer real de <code>SendMessage</code> existe entre <em>sesiones</em> de Claude Code</strong> — dos terminales, o sesiones en la nube, que se descubren con <code>ListAgents</code>. Dentro de una misma sesión, la ruta es el coordinador:</p>
+                    <pre><code>extractor   ──payload──►  [principal]  ──SendMessage(agentId)──►  transformer
+transformer ──payload──►  [principal]  ──SendMessage(agentId)──►  loader
+loader      ──payload──►  [principal]  ──SendMessage(agentId)──►  quality-checker</code></pre>
+                    <p>Por eso, en este ejercicio, <strong>cada agent devuelve en su resultado final el payload JSON destinado al siguiente</strong>, y el coordinador lo releva.</p>
+
+                    <p><strong>4. Un agent no espera mensajes.</strong> No existe primitiva de espera: ejecuta su prompt y termina. Si lanzas los cuatro en paralelo, los tres que aún no tienen trabajo terminan en segundos:</p>
+                    <pre><code>transformer      → "no he recibido START_TRANSFORM"   → termina
+loader           → "no he recibido START_LOAD"        → termina
+quality-checker  → "aguardando mensajes"              → termina
+extractor        → (leer, contar, copiar)             → termina con su payload</code></pre>
+                    <p>Por eso <strong>lanzamos cada etapa cuando le toca</strong>, no todas de golpe.</p>
+
+                    <p><strong>5. Encolado ≠ entregado.</strong> Un mensaje a un agent vivo responde <code>Message queued for delivery at its next tool round</code>. Si el agent termina su turno antes de ese round, el mensaje no se procesa. Verifica siempre que la etapa produjo su artefacto antes de dar por buena la entrega — y para flujos serios, implementa la <em>dead letter queue</em> del Tip Avanzado.</p>
                 </div>
 
                 <div class="collapsible open">
                     <div class="collapsible-header">
-                        <h3>📝 Paso 0: Crear Directorio de Agents (Si no existe)</h3>
+                        <h3>📝 Paso 0: Preparar Directorios y Datos</h3>
                         <span class="collapsible-icon">▼</span>
                     </div>
                     <div class="collapsible-content">
@@ -1377,6 +1398,8 @@ Guarda reporte en output/report_{{file}}.md
                         <pre><code># Crear estructura de directorios
 mkdir -p .claude/agents
 mkdir -p .claude/skills</code><button class="copy-btn">Copiar</button></pre>
+                        <p>Y genera los datos de práctica que consumirá el pipeline:</p>
+                        <pre><code>./generar-datos-muestra.sh .    # crea data/ventas_2024.csv y output/</code><button class="copy-btn">Copiar</button></pre>
                     </div>
                 </div>
 
@@ -1406,53 +1429,49 @@ teammates:
 # Extractor Agent
 
 ## Responsabilidad
-Tu tarea es extraer datos de fuentes y prepararlos para transformación.
+Extraer datos de la fuente indicada y dejarlos listos para transformación.
 
 ## Proceso
 
-1. Recibir la configuración inicial (via SendMessage)
-2. Conectar a la fuente de datos
-3. Extraer y validar básicamente los datos
-4. Guardar datos en archivo temporal
-5. **Notificar a transformer** con ruta del archivo
+1. Leer la configuración que te llega en el prompt inicial (ruta y tipo de fuente)
+2. Leer la fuente de datos
+3. Validar lo mínimo: header presente, columnas esperadas, conteo de filas
+4. Guardar los datos extraídos en `/tmp/extracted_data.csv`
+5. Devolver el payload de traspaso
 
-## Cómo Comunicarte
+## Cómo Entregas tu Trabajo
 
-Cuando termines extracción EXITOSA:
+Tus teammates son agents hermanos: NO son alcanzables desde tu contexto, así que
+no intentes `SendMessage` a ellos. **Tu canal de salida es tu resultado final.**
+Termina devolviendo exactamente este JSON:
 
-```javascript
-SendMessage({
-  to: "transformer",
-  message: {
-    "action": "START_TRANSFORM",
-    "data_file": "/tmp/extracted_data.csv",
-    "row_count": 1000,
-    "columns": ["id", "name", "email"]
-  }
-})
-```
+    {
+      "action": "START_TRANSFORM",
+      "data_file": "/tmp/extracted_data.csv",
+      "row_count": 12,
+      "columns": ["fecha","producto","categoria","region","cantidad","precio_unitario"],
+      "issues": []
+    }
 
-Si detectas problemas, notifica a quality-checker:
+Si detectas problemas de calidad, decláralos en `issues` — el coordinador se los
+pasa al quality-checker:
 
-```javascript
-SendMessage({
-  to: "quality-checker",
-  message: {
-    "action": "VALIDATE",
-    "stage": "extraction",
-    "issues": ["schema_mismatch", "null_values_found"],
-    "severity": "warning"
-  }
-})
-```
+    "issues": [
+      { "stage": "extraction",
+        "type": "null_values_found",
+        "detail": "1 fila con cantidad vacia (2024-01-15)",
+        "severity": "warning" }
+    ]
 
 ## Flujo Esperado
-- Esperar mensaje de inicio
-- Ejecutar extracción
-- Enviar datos a transformer
-- Mantener copia de backup</code><button class="copy-btn">Copiar</button></pre>
+- Ejecutas tu prompt de una sola pasada; no esperas mensajes de nadie
+- El coordinador releva tu payload al transformer
+- Deja `/tmp/extracted_data.csv` intacto como copia de lo extraído</code><button class="copy-btn">Copiar</button></pre>
 
-                        <p>⚠️ <strong>Campo importante:</strong> <code>teammates</code> lista los agents con los que este agent puede comunicarse directamente.</p>
+                        <div class="info-box">
+                            <strong>💡 Sobre <code>teammates:</code></strong>
+                            <p>Documenta el grafo del pipeline: con quién se supone que colabora este agent. Es una <strong>convención de documentación, no una ruta de red</strong> — lo vemos en detalle en el Paso 4.</p>
+                        </div>
                     </div>
                 </div>
 
@@ -1484,58 +1503,57 @@ teammates:
 # Transformer Agent
 
 ## Responsabilidad
-Aplicar transformaciones y validaciones a datos extraídos.
+Aplicar limpieza y transformaciones a los datos extraídos.
 
 ## Proceso de Transformación
 
-1. Escuchar mensaje de **extractor**
-2. Leer datos del archivo proporcionado
-3. Aplicar limpieza y transformaciones
-4. Validar resultado
-5. **Notificar a loader** con datos transformados
+1. Leer el payload `START_TRANSFORM` que te entrega el coordinador en tu prompt
+2. Leer el archivo indicado en `data_file`
+3. Aplicar limpieza: normalizar fechas a ISO, eliminar duplicados exactos,
+   decidir qué hacer con valores faltantes (documenta la decisión)
+4. Escribir el resultado en `/tmp/transformed_data.csv`
+5. Devolver el payload de traspaso
 
-## Cómo Responder a Extractor
+## Lo que Recibes
 
-Cuando recibas mensaje de extractor:
+    {
+      "action": "START_TRANSFORM",
+      "data_file": "/tmp/extracted_data.csv",
+      "row_count": 12
+    }
 
-```javascript
-// Escucharás algo como:
-{
-  "action": "START_TRANSFORM",
-  "data_file": "/tmp/extracted_data.csv",
-  "row_count": 1000
-}
+## Cómo Entregas tu Trabajo
 
-// Después de transformar, envía:
-SendMessage({
-  to: "loader",
-  message: {
-    "action": "START_LOAD",
-    "data_file": "/tmp/transformed_data.csv",
-    "row_count": 950,
-    "transformations_applied": [
-      "removed_duplicates",
-      "normalized_dates",
-      "filled_missing_values"
-    ]
-  }
-})
-```
+No intentes `SendMessage` al loader: es un agent hermano, no alcanzable desde tu
+contexto. Devuelve este JSON como resultado final:
 
-## Validación Cruzada
+    {
+      "action": "START_LOAD",
+      "data_file": "/tmp/transformed_data.csv",
+      "rows_in": 12,
+      "row_count": 11,
+      "transformations_applied": [
+        "normalized_dates",
+        "removed_duplicates",
+        "dropped_rows_missing_cantidad"
+      ],
+      "decisions": [
+        { "row": "2024-01-15 Mouse Inalambrico",
+          "action": "dropped",
+          "reason": "cantidad vacia; imputarla falsearia el GMV" }
+      ]
+    }
 
-Si necesitas clarificación o encuentras anomalías:
+## Si Algo No Cuadra
 
-```javascript
-SendMessage({
-  to: "extractor",
-  message: {
-    "action": "CLARIFY",
-    "issue": "column_missing",
-    "details": "Expected 'timestamp' column not found"
-  }
-})
-```</code><button class="copy-btn">Copiar</button></pre>
+No puedes preguntarle al extractor. Declara la duda en el payload y deja que el
+coordinador decida:
+
+    {
+      "action": "CLARIFY",
+      "issue": "column_missing",
+      "details": "Se esperaba la columna 'timestamp' y no aparece"
+    }</code><button class="copy-btn">Copiar</button></pre>
                     </div>
                 </div>
 
@@ -1556,6 +1574,7 @@ model: claude-sonnet-5
 tools:
   - Bash
   - Read
+  - Write
   - SendMessage
 teammates:
   - transformer
@@ -1566,53 +1585,49 @@ teammates:
 # Loader Agent
 
 ## Responsabilidad
-Cargar datos transformados a su destino final.
+Cargar los datos transformados a su destino final.
 
 ## Proceso de Carga
 
-1. Escuchar mensaje de **transformer**
-2. Validar integridad del archivo
-3. Cargar a destino (archivo, BD, warehouse, etc.)
-4. Verificar integridad de carga
-5. **Notificar a quality-checker** sobre completitud
+1. Leer el payload `START_LOAD` que te entrega el coordinador
+2. Validar la integridad del archivo (existe, tiene header, conteo esperado)
+3. Cargar a `output/ventas_cargadas.csv`, añadiendo la columna calculada
+   `total = cantidad * precio_unitario`
+4. Verificar que las filas cargadas coinciden con las esperadas
+5. Devolver el payload de verificación
 
-## Manejo de Mensajes del Transformer
+## Lo que Recibes
 
-Recibirás:
+    {
+      "action": "START_LOAD",
+      "data_file": "/tmp/transformed_data.csv",
+      "row_count": 11
+    }
 
-```javascript
-{
-  "action": "START_LOAD",
-  "data_file": "/tmp/transformed_data.csv",
-  "row_count": 950
-}
+## Cómo Entregas tu Trabajo
 
-// Después de cargar exitosamente:
-SendMessage({
-  to: "quality-checker",
-  message: {
-    "action": "VERIFY_LOAD",
-    "destination": "analytics_table",
-    "rows_loaded": 950,
-    "load_timestamp": "2024-08-23T10:30:00Z",
-    "status": "SUCCESS"
-  }
-})
-```
+Devuelve este JSON como resultado final:
+
+    {
+      "action": "VERIFY_LOAD",
+      "destination": "output/ventas_cargadas.csv",
+      "rows_expected": 11,
+      "rows_loaded": 11,
+      "status": "SUCCESS"
+    }
 
 ## En Caso de Error
 
-```javascript
-SendMessage({
-  to: "quality-checker",
-  message: {
-    "action": "LOAD_FAILED",
-    "error": "Connection refused to database",
-    "rows_attempted": 950,
-    "rows_loaded": 0
-  }
-})
-```</code><button class="copy-btn">Copiar</button></pre>
+No abortes en silencio: devuelve el fallo con el mismo formato, para que el
+coordinador pueda escalarlo o reintentar.
+
+    {
+      "action": "LOAD_FAILED",
+      "error": "No existe /tmp/transformed_data.csv",
+      "rows_attempted": 11,
+      "rows_loaded": 0,
+      "status": "FAILED"
+    }</code><button class="copy-btn">Copiar</button></pre>
                     </div>
                 </div>
 
@@ -1644,88 +1659,74 @@ authority: can-block
 # Quality Checker Agent
 
 ## Responsabilidad
-Supervisar calidad y bloquear si hay problemas críticos.
+Validar la calidad de cada etapa y bloquear el pipeline si hay problemas críticos.
 
 ## Qué Validar
 
 ### Fase de Extracción
-- ✓ Row count dentro de rangos esperados (ej: 100-10000 rows)
+- ✓ Row count dentro del rango esperado (5-10000 filas)
 - ✓ Todas las columnas esperadas presentes
 - ✓ No valores NULL en columnas clave
 - ✓ Tipos de datos coinciden
 
 ### Fase de Transformación
-- ✓ Ninguna pérdida de datos (rows_in ≈ rows_out)
+- ✓ Sin pérdida de datos injustificada (`rows_in ≈ row_count`)
 - ✓ Duplicados removidos correctamente
 - ✓ Fechas normalizadas correctamente
-- ✓ Valores esperados en rangos válidos
+- ✓ Cada fila descartada tiene su justificación en `decisions`
 
 ### Fase de Carga
 - ✓ Integridad referencial mantenida
-- ✓ Conteos coinciden con entrada
-- ✓ Timestamps de carga correctos
+- ✓ `rows_loaded == rows_expected`
+- ✓ La columna calculada `total` cuadra
 - ✓ No duplicados en destino
 
-## Cómo Actuar
+## Cómo Entregas tu Veredicto
 
-Cuando recibas validaciones de otros agents:
+Recibes del coordinador el payload de la etapa a validar. Devuelve siempre este
+JSON como resultado final — un solo veredicto por etapa:
 
-**Si pasa validación:**
+    {
+      "action": "VALIDATION_RESULT",
+      "stage": "extraction",
+      "verdict": "PASSED",
+      "checks_passed": 4,
+      "checks_failed": [],
+      "notes": "1 fila con cantidad vacia; el transformer debe decidir"
+    }
 
-```javascript
-// Solo registra - el flujo continúa
-SendMessage({
-  to: "extractor",  // o el agent que notificó
-  message: {
-    "action": "VALIDATION_PASSED",
-    "stage": "extraction",
-    "checks_passed": 4,
-    "timestamp": "2024-08-23T10:15:00Z"
-  }
-})
-```
+Si detectas un problema CRÍTICO, **bloquea**: el coordinador debe detener el
+pipeline y no lanzar la siguiente etapa.
 
-**Si detectas problema CRÍTICO:**
-
-```javascript
-// BLOQUEA el flujo
-SendMessage({
-  to: "transformer",  // bloquea el siguiente agent
-  message: {
-    "action": "BLOCK",
-    "reason": "Critical data quality issue",
-    "issue": "50% NULL values in ID column",
-    "recommendation": "Extractor debe reintentar with schema validation",
-    "severity": "CRITICAL"
-  }
-})
-```
-
-El agent bloqueado debe parar y reportar al usuario.
+    {
+      "action": "VALIDATION_RESULT",
+      "stage": "extraction",
+      "verdict": "BLOCKED",
+      "checks_passed": 2,
+      "checks_failed": ["row_count_out_of_range"],
+      "reason": "12 filas, fuera del rango esperado 100-10000",
+      "recommendation": "Revisar la fuente o ajustar el rango esperado",
+      "severity": "CRITICAL"
+    }
 
 ## Escalación
 
-Si un problema ocurre 3+ veces:
+Si el mismo problema aparece 3+ veces, no sigas reintentando: escala al humano.
 
-```javascript
-SendMessage({
-  to: "extractor",
-  message: {
-    "action": "ESCALATE",
-    "reason": "Pattern detected - repeated validation failures",
-    "failed_attempts": 3,
-    "recommendation": "Manual review needed - possible source data corruption"
-  }
-})
-```</code><button class="copy-btn">Copiar</button></pre>
+    {
+      "action": "ESCALATE",
+      "reason": "Fallos de validacion repetidos en la misma etapa",
+      "failed_attempts": 3,
+      "recommendation": "Revision manual - posible corrupcion en la fuente"
+    }</code><button class="copy-btn">Copiar</button></pre>
 
                         <div class="warning-box">
                             <strong>⚠️ <code>authority: can-block</code> — qué es real y qué es convención</strong>
                             <p>Deténte aquí, porque este campo enseña algo importante sobre cómo funcionan realmente los agents.</p>
-                            <p><strong>El frontmatter que Claude Code interpreta es:</strong> <code>name</code>, <code>description</code>, <code>tools</code>, <code>model</code> y <code>teammates</code>. Cualquier otra clave —<code>authority</code> incluida— se ignora silenciosamente al cargar el agent.</p>
-                            <p>Compruébalo tú mismo: pídele a Claude que liste los agents disponibles. Verás <code>quality-checker</code> con su description, tools y model. De <code>authority</code> no queda rastro.</p>
+                            <p><strong>El frontmatter que Claude Code interpreta es:</strong> <code>name</code>, <code>description</code>, <code>tools</code> y <code>model</code>. Cualquier otra clave —<code>authority</code> y <code>teammates</code> incluidas— no crea comportamiento en el runtime.</p>
+                            <p>Compruébalo tú mismo: pídele a Claude que liste los agents disponibles. Verás <code>quality-checker</code> con su description, tools y model. De <code>authority</code> no queda rastro. Y <code>teammates:</code> <strong>no crea rutas de mensajería</strong>: un <code>SendMessage</code> a un hermano listado ahí falla igual con <code>"no reachable"</code>.</p>
                             <p><strong>¿Entonces por qué funciona?</strong> Porque el agent lee su propio prompt. <code>authority: can-block</code> es una <strong>convención semántica</strong>: le comunica al modelo "tú tienes potestad de detener esto". El bloqueo es <strong>cooperativo</strong> — ocurre porque el modelo coopera, no porque el runtime lo imponga.</p>
-                            <p>Eso no lo hace inútil: documentar roles es buena práctica y el modelo los respeta. Pero hay que saber qué garantía tienes. Otros valores con la misma lógica:</p>
+                            <p>Eso no lo hace inútil: documentar roles y colaboradores es buena práctica y el modelo los respeta. Pero hay que saber qué garantía tienes. Otros valores con la misma lógica:</p>
                             <table>
                                 <tr><th>Valor</th><th>Convención</th></tr>
                                 <tr><td><code>can-block</code></td><td>Detiene el flujo ante un fallo crítico</td></tr>
@@ -1756,7 +1757,7 @@ SendMessage({
                     <div class="collapsible-content">
                         <div class="info-box">
                             <strong>❓ ¿Dónde va este código?</strong>
-                            <p>Pregunta frecuente, y la respuesta desbloquea el patrón: <strong>el handoff no es un archivo nuevo ni código ejecutable suelto.</strong> Es un <em>formato de mensaje</em> que documentas <strong>dentro del body de un agent <code>.md</code></strong>, en su sección "Cómo Comunicarte". Es la misma llamada <code>SendMessage</code> de los Pasos 1-4, solo que con un payload más rico.</p>
+                            <p>Pregunta frecuente, y la respuesta desbloquea el patrón: <strong>el handoff no es un archivo nuevo ni código ejecutable suelto.</strong> Es un <em>formato de payload</em> que documentas <strong>dentro del body de un agent <code>.md</code></strong>, en su sección "Cómo Entregas tu Trabajo". Es el mismo traspaso de los Pasos 1-4, solo que con un contenido mucho más rico.</p>
                             <p><strong>Es opcional.</strong> El pipeline de este ejercicio funciona sin él. Pero resuelve un problema concreto que conviene entender.</p>
                         </div>
 
@@ -1766,73 +1767,73 @@ SendMessage({
                             <tr><td><strong>Payload</strong></td><td><code>{data_file, row_count}</code></td><td>+ qué se hizo, qué falta, restricciones, artifacts</td></tr>
                             <tr><td><strong>Supuesto</strong></td><td>El receptor ya sabe su trabajo</td><td>El receptor <strong>no tiene tu contexto</strong></td></tr>
                             <tr><td><strong>Tarea</strong></td><td>Predefinida y fija</td><td>Abierta ("limpia esto, tú decides cómo")</td></tr>
-                            <tr><td><strong>Emisor</strong></td><td>Sigue vivo, puede recibir respuesta</td><td><strong>Termina</strong> tras enviar</td></tr>
+                            <tr><td><strong>Emisor</strong></td><td>Ya terminó; su payload es rutinario</td><td><strong>Termina</strong> transfiriendo la responsabilidad entera</td></tr>
                         </table>
 
                         <p>La razón de fondo: <strong>cada agent corre en su propia ventana de contexto</strong>. El <code>transformer</code> no ve <em>nada</em> de lo que hizo el <code>extractor</code> — ni los archivos que leyó, ni las decisiones que tomó, ni los errores que sorteó por el camino.</p>
                         <p>Si la tarea del receptor está fija de antemano, tres campos bastan. Si el receptor tiene que <strong>decidir</strong> algo, necesita el contexto completo o improvisará a ciegas.</p>
 
                         <p><strong>Formato de Handoff:</strong></p>
-                        <pre><code>SendMessage({
-  to: "next_agent",
-  message: {
-    "action": "HANDOFF",
-    "task_description": "Descripción completa de qué hay que hacer",
-    "context": {
-      "what_was_done": [
-        "Extracted data from PostgreSQL",
-        "Validated schema"
-      ],
-      "what_remains": [
-        "Clean and transform data",
-        "Load to warehouse"
-      ],
-      "important_constraints": [
-        "Must preserve date formatting",
-        "Customer IDs are sensitive"
-      ]
-    },
-    "artifacts": [
-      {
-        "path": "/tmp/extracted_data.csv",
-        "description": "Raw extracted data - 1000 rows",
-        "checksum": "abc123"
-      },
-      {
-        "path": "/tmp/schema.json",
-        "description": "Expected schema and types"
-      }
+                        <pre><code>{
+  "action": "HANDOFF",
+  "task_description": "Descripción completa de qué hay que hacer",
+  "context": {
+    "what_was_done": [
+      "Extracted data from PostgreSQL",
+      "Validated schema"
     ],
-    "timeout_minutes": 30,
-    "priority": "HIGH"
-  }
-})</code><button class="copy-btn">Copiar</button></pre>
-                        <p><strong>Después del handoff, el agent que delegó debe finalizar su tarea.</strong> No se queda esperando respuesta: transfirió la responsabilidad completa.</p>
+    "what_remains": [
+      "Clean and transform data",
+      "Load to warehouse"
+    ],
+    "important_constraints": [
+      "Must preserve date formatting",
+      "Customer IDs are sensitive"
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "/tmp/extracted_data.csv",
+      "description": "Raw extracted data - 1000 rows",
+      "checksum": "abc123"
+    },
+    {
+      "path": "/tmp/schema.json",
+      "description": "Expected schema and types"
+    }
+  ],
+  "timeout_minutes": 30,
+  "priority": "HIGH"
+}</code><button class="copy-btn">Copiar</button></pre>
+                        <p><strong>Después del handoff, el agent que delegó finaliza su tarea.</strong> No se queda esperando respuesta: transfirió la responsabilidad completa.</p>
 
                         <h4>Dónde ponerlo en TU ejercicio</h4>
                         <p>En <code>.claude/agents/extractor.md</code>, como <strong>alternativa</strong> al <code>START_TRANSFORM</code> estándar. Añade esta sección al body del agent:</p>
                         <pre><code>## Handoff Completo (cuando la transformación no es rutinaria)
 
-Normalmente envías START_TRANSFORM y sigues disponible. Pero si detectas que
-los datos requieren limpieza NO estándar (schema inesperado, formatos mixtos,
-reglas de negocio ambiguas), transfiere la tarea completa y termina:
+Normalmente devuelves START_TRANSFORM. Pero si detectas que los datos requieren
+limpieza NO estándar (schema inesperado, formatos mixtos, reglas de negocio
+ambiguas), devuelve un HANDOFF: el coordinador se lo pasa entero al transformer.
 
-SendMessage({
-  to: "transformer",
+    {
+      "action": "HANDOFF",
+      "task_description": "Limpiar ventas_2024.csv - formatos de fecha mixtos",
+      "context": {
+        "what_was_done": ["Leido el CSV", "Schema validado parcialmente"],
+        "what_remains": ["Normalizar 3 formatos de fecha distintos", "Cargar a destino"],
+        "important_constraints": ["No inventes valores para cantidad vacia"]
+      },
+      "artifacts": [
+        { "path": "/tmp/extracted_data.csv", "description": "12 filas crudas" }
+      ]
+    }</code><button class="copy-btn">Copiar</button></pre>
+
+                        <p>Cuando el receptor <strong>sí</strong> es alcanzable —otra sesión de Claude Code, o un subagent que tú mismo lanzaste— el mismo payload viaja por <code>SendMessage</code>, serializado:</p>
+                        <pre><code>SendMessage({
+  to: "a18048adb026a856f",                       // agentId, no el nombre del type
   summary: "Handoff: datos requieren limpieza no estandar",
-  message: JSON.stringify({
-    action: "HANDOFF",
-    task_description: "Limpiar ventas_2024.csv - formatos de fecha mixtos",
-    context: {
-      what_was_done: ["Extraido de PostgreSQL", "Schema validado parcialmente"],
-      what_remains: ["Normalizar 3 formatos de fecha", "Cargar a warehouse"],
-      important_constraints: ["Los customer_id son sensibles - no loguear"]
-    },
-    artifacts: [{ path: "/tmp/extracted_data.csv", description: "1000 rows crudos" }]
-  })
-})
-
-Después de enviar el HANDOFF, tu tarea termina. No esperes respuesta.</code><button class="copy-btn">Copiar</button></pre>
+  message: JSON.stringify({ action: "HANDOFF", /* ... */ })
+})</code><button class="copy-btn">Copiar</button></pre>
 
                         <div class="tip-box">
                             <strong>💡 Regla para decidir</strong>
@@ -1843,30 +1844,31 @@ Después de enviar el HANDOFF, tu tarea termina. No esperes respuesta.</code><bu
 
                 <div class="collapsible">
                     <div class="collapsible-header">
-                        <h3>🔍 Paso 6: Cómo Iniciar el Team - ListAgents</h3>
+                        <h3>🔍 Paso 6: Descubrir Agents — <code>/agents</code> y <code>ListAgents</code></h3>
                         <span class="collapsible-icon">▼</span>
                     </div>
                     <div class="collapsible-content">
-                        <p><strong>Herramienta disponible:</strong> <code>ListAgents</code></p>
-                        <p>Para descubrir todos los agents en tu team:</p>
-                        <pre><code># Desde tu aplicación/skill, usa:
-await ListAgents()
+                        <p>Son dos cosas distintas, y confundirlas es el tropiezo más común del tema:</p>
+                        <table>
+                            <tr><th></th><th>Qué muestra</th></tr>
+                            <tr><td><code>/agents</code></td><td>Las <strong>definiciones</strong> cargadas: los <code>.md</code> de <code>.claude/agents/</code>, con su model y tools</td></tr>
+                            <tr><td><code>ListAgents</code></td><td>Las <strong>instancias vivas</strong> ahora mismo, con su <code>agentId</code></td></tr>
+                        </table>
 
-# Esto retorna:
-// {
-//   "agents": [
-//     { "name": "extractor", "status": "ready" },
-//     { "name": "transformer", "status": "ready" },
-//     { "name": "loader", "status": "ready" },
-//     { "name": "quality-checker", "status": "ready" }
-//   ]
-// }</code><button class="copy-btn">Copiar</button></pre>
+                        <p>Antes de lanzar nada, <code>ListAgents</code> está vacío — y eso es correcto, no un error:</p>
+                        <pre><code>No reachable agents</code></pre>
+                        <p>Los <code>.md</code> son <em>tipos</em> de agent, no procesos. Después de lanzar la primera etapa:</p>
+                        <pre><code>await ListAgents()
+
+// extractor    a18048adb026a856f   completed
+// transformer  c47f21b9de034117    running</code><button class="copy-btn">Copiar</button></pre>
+                        <p>Esos <code>agentId</code> son las direcciones que necesitas para reanudar una instancia con <code>SendMessage</code>. <code>ListAgents</code> también lista <strong>otras sesiones de Claude Code</strong> alcanzables — ahí sí hay peer-to-peer real.</p>
                     </div>
                 </div>
 
                 <div class="collapsible">
                     <div class="collapsible-header">
-                        <h3>🚀 Paso 7: Ejecutar el Team - Ejemplo Práctico</h3>
+                        <h3>🚀 Paso 7: Crear el Skill Coordinador</h3>
                         <span class="collapsible-icon">▼</span>
                     </div>
                     <div class="collapsible-content">
@@ -1882,81 +1884,92 @@ description: Ejecuta el pipeline de datos completo con todos los agents
 
 # Run Pipeline Skill
 
-Este skill inicia y coordina el pipeline de datos.
+Coordina el pipeline ETL de extremo a extremo. **Tú, el agente principal, eres el
+coordinador**: los agents del team no se alcanzan entre sí, así que tú relevas el
+payload de cada etapa a la siguiente.
 
-## Flujo Completo
+## 0. Preparar datos
 
-### 1. Spawn de Agents
-Primero, inicia todos los agents del team usando el Agent tool:
+Verifica que existe `data/ventas_2024.csv`. Si no:
+`./generar-datos-muestra.sh .`
 
-```javascript
-// Iniciar los 4 agents del team
-const extractor = await Agent({
-  description: "Extractor agent for data pipeline",
-  agentType: "extractor"
-})
+## 1. Extracción
 
-const transformer = await Agent({
-  description: "Transformer agent for data pipeline",
-  agentType: "transformer"
-})
+Lanza el extractor con el Agent tool (el parámetro del tipo es `subagent_type`):
 
-const loader = await Agent({
-  description: "Loader agent for data pipeline",
-  agentType: "loader"
-})
+    Agent({
+      description: "Extraer ventas_2024",
+      subagent_type: "extractor",
+      prompt: "Extrae data/ventas_2024.csv (CSV; ojo: hay una linea vacia antes " +
+              "del header). Guardalo en /tmp/extracted_data.csv y devuelve el " +
+              "payload START_TRANSFORM."
+    })
 
-const qualityChecker = await Agent({
-  description: "Quality checker for data pipeline",
-  agentType: "quality-checker"
-})
-```
+Del resultado guarda DOS cosas: el **payload JSON** y el **agentId**.
 
-### 2. Iniciar Extracción
-Envía el primer mensaje al extractor:
+## 2. Validar la extracción
 
-```javascript
-SendMessage({
-  to: "extractor",
-  message: {
-    "action": "START",
-    "config": {
-      "source": "sample_data.csv",
-      "type": "csv"
-    },
-    "instructions": "Extract all rows and pass to transformer"
-  }
-})
-```
+    Agent({
+      description: "Validar extraccion",
+      subagent_type: "quality-checker",
+      prompt: "Valida la etapa de extraccion con este payload: &lt;payload del paso 1&gt;"
+    })
 
-### 3. Monitorear Progreso
-El flujo será:
-- extractor → (SendMessage) → transformer
-- transformer → (SendMessage) → loader
-- loader → (SendMessage) → quality-checker
-- quality-checker → reporta resultado
+Si el veredicto es `BLOCKED`, **detente aquí** y reporta al usuario. No lances la
+siguiente etapa.
 
-### 4. Manejo de Errores
-Si quality-checker bloquea:
+## 3. Transformación
 
-```javascript
-SendMessage({
-  to: "extractor",
-  message: {
-    "action": "RETRY",
-    "reason": "Quality check failed, retrying extraction",
-    "attempt": 2
-  }
-})
-```</code><button class="copy-btn">Copiar</button></pre>
+    Agent({
+      description: "Transformar datos",
+      subagent_type: "transformer",
+      prompt: "Aplica la transformacion. Payload de entrada: &lt;payload del paso 1&gt;"
+    })
 
-                        <p>Desde allí, <strong>la cadena NO se auto-ejecuta</strong>: los agents no se alcanzan entre sí. El agente principal releva cada payload al siguiente — ver el Paso 8.</p>
+## 4. Validar la transformación
+
+Igual que el paso 2, con `stage: "transformation"`.
+
+## 5. Carga
+
+    Agent({
+      description: "Cargar a destino",
+      subagent_type: "loader",
+      prompt: "Carga los datos. Payload de entrada: &lt;payload del paso 3&gt;"
+    })
+
+## 6. Validación final
+
+Valida `stage: "load"` y reporta al usuario la tabla de conteos por etapa.
+
+## Reanudar una instancia ya lanzada
+
+Si necesitas volver a hablar con un agent (por ejemplo, pedirle un reintento tras
+un BLOCK), usa su `agentId` — no el nombre del type — y recuerda que `message` es
+un string:
+
+    SendMessage({
+      to: "a18048adb026a856f",                  // agentId devuelto por el spawn
+      summary: "Reintenta extraccion con validacion de schema",
+      message: JSON.stringify({
+        action: "RETRY",
+        reason: "Quality check fallo: row_count fuera de rango",
+        attempt: 2
+      })
+    })
+
+Un agent terminado sigue siendo reanudable (`Resuming agent ...`).
+
+## Traza del flujo
+
+    extractor → [tú] → quality-checker → [tú] → transformer → [tú]
+              → quality-checker → [tú] → loader → [tú] → quality-checker</code><button class="copy-btn">Copiar</button></pre>
                     </div>
                 </div>
 
                 <div class="collapsible">
                     <div class="collapsible-header">
-                        <h3>▶️ Paso 8: Ejecutar el Flujo Final — y Qué Pasa de Verdad</h3>
+                        <h3>▶️ Paso 8: Ejecutar el Flujo Final</h3>
                         <span class="collapsible-icon">▼</span>
                     </div>
                     <div class="collapsible-content">
@@ -1965,77 +1978,17 @@ SendMessage({
                         <pre><code>/run-pipeline</code><button class="copy-btn">Copiar</button></pre>
 
                         <div class="info-box">
-                            <strong>📌 El JavaScript del SKILL.md no se ejecuta</strong>
-                            <p>Un skill son <em>instrucciones para el agente principal</em>: Claude lee el SKILL.md y hace las llamadas reales a <code>Agent(...)</code> y <code>SendMessage(...)</code>. Nadie interpreta ese bloque de código — es pseudocódigo que describe el protocolo.</p>
+                            <strong>📌 El código del SKILL.md no se ejecuta</strong>
+                            <p>Un skill son <em>instrucciones para el agente principal</em>: Claude lee el SKILL.md y hace las llamadas reales a <code>Agent(...)</code> y <code>SendMessage(...)</code>. Nadie interpreta esos bloques — son pseudocódigo que describe el protocolo.</p>
                         </div>
 
-                        <h4>Antes de correr: prepara los datos</h4>
-                        <pre><code>./generar-datos-muestra.sh .    # crea data/ventas_2024.csv y output/</code><button class="copy-btn">Copiar</button></pre>
-
-                        <h4>Dos erratas del Paso 7 que hay que corregir</h4>
-                        <table>
-                            <thead><tr><th>En el ejemplo</th><th>Correcto</th></tr></thead>
-                            <tbody>
-                                <tr><td><code>agentType: "extractor"</code></td><td><code>subagent_type: "extractor"</code></td></tr>
-                                <tr><td><code>message: { ... }</code></td><td><code>message: JSON.stringify({ ... })</code></td></tr>
-                            </tbody>
-                        </table>
-
-                        <h4>Lo que descubres al correrlo</h4>
-                        <p>Este ejercicio se ejecutó de verdad. <strong>El resultado importa más que el pipeline.</strong></p>
-
-                        <p><strong>1. <code>ListAgents</code> vacío no es un error.</strong> Antes de lanzar nada devuelve <code>No reachable agents</code>. Los <code>.md</code> de <code>.claude/agents/</code> son <strong>definiciones</strong> (agent <em>types</em>), no procesos. <code>ListAgents</code> lista <strong>instancias vivas</strong>; para ver las definiciones cargadas usa <code>/agents</code>.</p>
-
-                        <div class="warning-box">
-                            <strong>⚠️ 2. Un agent NO espera mensajes</strong>
-                            <p>No existe primitiva de espera. Al lanzar los 4 en paralelo, tres terminaron en ~12 segundos sin hacer nada:</p>
-                            <pre><code>transformer      → "no he recibido START_TRANSFORM"   → termina
-loader           → "no he recibido START_LOAD"        → termina
-quality-checker  → "aguardando mensajes"              → termina
-extractor        → (62s: leer, contar, copiar)        → intenta notificar...</code></pre>
-                            <p>Cuando el extractor fue a notificar, <strong>ya no quedaba nadie</strong>. "Escuchar mensaje de extractor" (Pasos 2 y 3) no es algo que un agent pueda hacer.</p>
-                        </div>
-
-                        <p><strong>3. Los teammates no son alcanzables entre sí.</strong> El extractor obtuvo:</p>
-                        <pre><code>SendMessage a "transformer"      → No agent named 'transformer' is reachable
-SendMessage a "quality-checker"  → No agent named 'quality-checker' is reachable</code></pre>
-
-                        <div class="warning-box">
-                            <strong>⚠️ Corrección al Paso 4</strong>
-                            <p><code>teammates:</code> <strong>no crea rutas de mensajería.</strong> Cae en la misma categoría que <code>authority: can-block</code> — convención documental. Los 4 agents son <em>hermanos</em>, hijos del agente principal, no peers entre sí. La única autoridad real del frontmatter sigue siendo <code>tools:</code>.</p>
-                        </div>
-
-                        <p><strong>4. El nombre del type no es una dirección.</strong> Incluso desde el agente principal:</p>
-                        <pre><code>SendMessage({to: "transformer", ...})       → No agent named 'transformer' is reachable
-SendMessage({to: "a18048adb026a856f", ...}) → Resuming agent a18048a   ✓</code></pre>
-                        <p>Hay que usar el <strong><code>agentId</code> de la instancia</strong>, que devuelve el spawn. Y nota <code>Resuming</code>: un agent terminado <strong>sigue siendo reanudable</strong> desde su transcript. Eso es lo que hace viable el pipeline.</p>
-
-                        <p><strong>5. Encolado ≠ entregado.</strong> Un mensaje a un agent <em>vivo</em> responde <code>Message queued for delivery at its next tool round</code>. Si el agent termina su turno antes de ese round, <strong>el mensaje no se procesa</strong>: nuestro quality-checker validó dos etapas y terminó diciendo "awaiting VERIFY_LOAD" con el mensaje encolado sin consumir. Hubo que reenviarlo. Este es exactamente el agujero que justifica el patrón <em>dead letter queue</em> del Tip Avanzado.</p>
-
-                        <h4>El patrón que sí funciona: relevo por el padre</h4>
-                        <p>Los agents no se hablan entre sí; <strong>el agente principal releva cada payload</strong> al siguiente, por <code>agentId</code>:</p>
-                        <pre><code>extractor   ──payload──►  [principal]  ──SendMessage(agentId)──►  transformer
-transformer ──payload──►  [principal]  ──SendMessage(agentId)──►  loader
-loader      ──payload──►  [principal]  ──SendMessage(agentId)──►  quality-checker</code></pre>
-
-                        <p>Para que el relevo sea posible, cada agent debe <strong>devolver en su resultado final el payload JSON</strong> que le habría enviado al siguiente, en vez de intentar un <code>SendMessage</code> que fallará. Añade esto al body de cada agent:</p>
-                        <pre><code>## Notificación
-
-Tus teammates NO son alcanzables desde tu contexto (`SendMessage` a ellos falla
-con "no reachable" — son agents hermanos, no tus subagents). NO intentes
-enviarles mensajes. Devuelve en tu resultado final el payload JSON destinado al
-siguiente agent; el coordinador lo releva.</code><button class="copy-btn">Copiar</button></pre>
-
-                        <div class="golden-rule">
-                            <h4>📜 Lo que se llevan de este paso</h4>
-                            <pre><code>Sí, esto es hub-and-spoke — el Tema 7.
-Reconocerlo ES la lección.
-
-El peer-to-peer entre subagents hermanos no está
-disponible por esta vía. SendMessage entre peers SÍ
-funciona entre SESIONES de Claude Code (ListAgents
-cross-session), no entre subagents de una misma sesión.</code></pre>
-                        </div>
+                        <h4>Qué observar mientras corre</h4>
+                        <ol>
+                            <li><strong><code>ListAgents</code> vacío al principio.</strong> Antes de lanzar nada devuelve <code>No reachable agents</code>. Es lo esperado: aún no hay instancias. Para ver las definiciones cargadas, <code>/agents</code>.</li>
+                            <li><strong>Cada etapa termina en cuanto entrega su payload.</strong> Ningún agent se queda esperando; por eso el coordinador lanza la siguiente etapa cuando tiene el payload de la anterior.</li>
+                            <li><strong>El coordinador es visible en la traza.</strong> Verás alternarse <code>Agent(...)</code> y la lectura del payload devuelto. Ese ida y vuelta <em>es</em> el pipeline.</li>
+                            <li><strong>Los artefactos aparecen en disco en orden:</strong> <code>/tmp/extracted_data.csv</code>, luego <code>/tmp/transformed_data.csv</code>, luego <code>output/ventas_cargadas.csv</code>.</li>
+                        </ol>
 
                         <h4>Resultado esperado end-to-end</h4>
                         <pre><code>etapa            filas   artefacto
@@ -2045,20 +1998,20 @@ transformación     11    /tmp/transformed_data.csv   (descarta 1: cantidad vac�
 carga              11    output/ventas_cargadas.csv  (+ columna total)</code></pre>
 
                         <div class="tip-box">
-                            <strong>💡 La fila descartada es el entregado real</strong>
-                            <p>El valor faltante está sembrado a propósito en <code>ventas_2024.csv</code>. Fuerza una decisión del quality-checker: su regla dice <em>"ninguna pérdida de datos"</em>, pero el dato es irrecuperable. El nuestro dio <strong>PASSED</strong> argumentando que <code>cantidad</code> es necesaria para GMV y no se puede imputar sin arbitrariedad — y dejó nota de que producción necesita una política explícita de imputación vs. descarte. <strong>Ese razonamiento es el entregable del ejercicio, no el CSV.</strong></p>
+                            <strong>💡 La fila descartada es el entregable real</strong>
+                            <p>El valor faltante está sembrado a propósito en <code>ventas_2024.csv</code>. Fuerza una decisión del quality-checker: su regla dice <em>"sin pérdida de datos injustificada"</em>, pero el dato es irrecuperable. Lo esperable es un <strong>PASSED</strong> argumentando que <code>cantidad</code> es necesaria para el GMV y no se puede imputar sin arbitrariedad — con nota de que producción necesita una política explícita de imputación vs. descarte. <strong>Ese razonamiento es el entregable del ejercicio, no el CSV.</strong></p>
                         </div>
 
                         <h4>Cómo comprobarlo — 4 niveles</h4>
                         <pre><code># 1. Definiciones cargadas   → /agents      (los 4, con model y tools)
-# 2. Instancias vivas        → ListAgents   (running / completed)
+# 2. Instancias vivas        → ListAgents   (running / completed + agentId)
 # 3. Artefactos y conteos
 wc -l /tmp/extracted_data.csv /tmp/transformed_data.csv output/ventas_cargadas.csv
-# 4. Veredicto del quality-checker: PASSED o BLOCK por cada etapa</code><button class="copy-btn">Copiar</button></pre>
+# 4. Veredicto del quality-checker: PASSED o BLOCKED por cada etapa</code><button class="copy-btn">Copiar</button></pre>
                         <p>Para el nivel 3, que los conteos cuadren: <code>extraídas ≥ transformadas == cargadas</code>.</p>
 
-                        <h4>Variante: ver un BLOCK de verdad</h4>
-                        <p>El quality-checker exige "row count entre 100-10000" y el dataset tiene 12 filas. Tal cual, <strong>bloquea</strong> — y eso comprueba el ítem "Bloqueos de quality-checker detienen el pipeline". Para el camino feliz, baja el rango a <code>5-10000</code> en <code>quality-checker.md</code>.</p>
+                        <h4>Variante: provocar un BLOCK</h4>
+                        <p>Sube el rango esperado de filas a <code>100-10000</code> en <code>quality-checker.md</code> y vuelve a correr. Con 12 filas el veredicto será <code>BLOCKED</code> y el coordinador debe <strong>detener el pipeline</strong> ahí mismo. Es la forma de comprobar el ítem "bloqueos del quality-checker detienen el pipeline" — y de ver que el bloqueo es <em>cooperativo</em>: funciona porque el coordinador respeta el veredicto.</p>
 
                         <h4>Variante: transformaciones con efecto real</h4>
                         <p>Con <code>ventas_2024.csv</code>, el transformer reporta <code>removed_duplicates</code> y <code>normalized_dates</code>… y ninguna hace nada (ya está en ISO, sin duplicados). Para que el pipeline haga trabajo observable, usa el dataset sucio que genera el script:</p>
@@ -2073,28 +2026,31 @@ wc -l /tmp/extracted_data.csv /tmp/transformed_data.csv output/ventas_cargadas.c
                         <span class="collapsible-icon">▼</span>
                     </div>
                     <div class="collapsible-content">
-                        <pre><code>┌─────────────────────────────────────────────────────────┐
-│                    AGENT TEAM                           │
-├─────────────────────────────────────────────────────────┤
-│                                                         │
-│   ┌───────────┐    data     ┌─────────────┐             │
-│   │ EXTRACTOR │ ─────────►  │ TRANSFORMER │             │
-│   └─────┬─────┘             └──────┬──────┘             │
-│         │                          │                    │
-│         │ validate                 │ validate           │
-│         ▼                          ▼                    │
-│   ┌─────────────────────────────────────┐               │
-│   │         QUALITY CHECKER             │               │
-│   │    (puede bloquear cualquiera)      │               │
-│   └─────────────────────────────────────┘               │
-│         ▲                          ▲                    │
-│         │ validate                 │                    │
-│         │                          │ data               │
-│   ┌─────┴─────┐             ┌──────┴──────┐             │
-│   │  LOADER   │ ◄───────────│ TRANSFORMER │             │
-│   └───────────┘             └─────────────┘             │
-│                                                         │
-└─────────────────────────────────────────────────────────┘</code><button class="copy-btn">Copiar</button></pre>
+                        <pre><code>┌──────────────────────────────────────────────────────────────┐
+│                        AGENT TEAM                            │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│    ┌───────────┐   ┌─────────────┐   ┌──────────┐            │
+│    │ EXTRACTOR │   │ TRANSFORMER │   │  LOADER  │            │
+│    │  (Sonnet) │   │  (Sonnet)   │   │ (Sonnet) │            │
+│    └─────┬─────┘   └──────┬──────┘   └────┬─────┘            │
+│          │ payload        │ payload       │ payload          │
+│          ▼                ▼               ▼                  │
+│    ╔══════════════════════════════════════════════╗          │
+│    ║      COORDINADOR  (el agente principal)      ║          │
+│    ║   releva cada payload a la etapa siguiente   ║          │
+│    ╚══════════════════════════════════════════════╝          │
+│          │                ▲                                  │
+│          │ valida etapa   │ veredicto PASSED / BLOCKED       │
+│          ▼                │                                  │
+│    ┌──────────────────────┴───────────────────────┐          │
+│    │            QUALITY CHECKER (Haiku)           │          │
+│    │   sin Write en tools → no puede tocar datos  │          │
+│    └──────────────────────────────────────────────┘          │
+│                                                              │
+│  Los 4 agents son HERMANOS: no se alcanzan entre sí.         │
+│  El peer-to-peer real de SendMessage es ENTRE SESIONES.      │
+└──────────────────────────────────────────────────────────────┘</code><button class="copy-btn">Copiar</button></pre>
                     </div>
                 </div>
 
@@ -2107,8 +2063,8 @@ wc -l /tmp/extracted_data.csv /tmp/transformed_data.csv output/ventas_cargadas.c
                     <li><strong>Migración a escala.</strong> Un agent descubre todos los call sites; N agents transforman en paralelo (cada uno en su propio worktree para no pisarse); un verifier corre los tests. Este es <em>el</em> caso canónico: el trabajo no cabe en un solo contexto y el paralelismo es real.</li>
                     <li><strong>Code review con perspectivas independientes.</strong> <code>security-reviewer</code>, <code>perf-reviewer</code> y <code>test-coverage-reviewer</code> revisan el mismo diff <strong>sin verse entre sí</strong>, y un <code>verifier</code> intenta <em>refutar</em> cada hallazgo antes de reportarlo. La independencia es el punto entero: un solo agente ancla sus conclusiones en lo primero que encontró y deja de buscar.</li>
                     <li><strong>Implementar → probar → arreglar en loop.</strong> <code>implementer</code> escribe el código y hace handoff a <code>tester</code>, que rebota los fallos de vuelta. Clave: el tester <strong>no debe ver</strong> el razonamiento del implementer. Si lo ve, hereda sus puntos ciegos y valida los mismos supuestos equivocados.</li>
-                    <li><strong>Debug de sistemas distribuidos.</strong> Un agent por servicio o por fuente de logs, cada uno con contexto de su dominio, correlacionando hallazgos vía <code>SendMessage</code>. Ningún contexto único aguanta los logs de cinco servicios a la vez.</li>
-                    <li><strong>Pipeline de datos real (nuestro ejercicio, a escala).</strong> Con 1000 archivos, el extractor procesa el archivo N+1 mientras el transformer aún trabaja en el N. Con subagents centralizados (Tema 7) esperarías cada paso.</li>
+                    <li><strong>Debug de sistemas distribuidos.</strong> Un agent por servicio o por fuente de logs, cada uno con contexto de su dominio, correlacionando hallazgos a través del coordinador. Ningún contexto único aguanta los logs de cinco servicios a la vez.</li>
+                    <li><strong>Pipeline de datos real (nuestro ejercicio, a escala).</strong> Con 1000 archivos, el coordinador puede lanzar la extracción del archivo N+1 mientras el transformer aún trabaja en el N. Con un solo agente secuencial esperarías cada paso.</li>
                 </ol>
 
                 <h3>❌ Bajo valor — usa un subagent normal, o nada</h3>
@@ -2159,24 +2115,29 @@ wc -l /tmp/extracted_data.csv /tmp/transformed_data.csv output/ventas_cargadas.c
                 </div>
 
                 <ul>
-                    <li><strong>Tema 7 (Subagents):</strong> Teams son subagents que se comunican entre sí</li>
+                    <li><strong>Tema 7 (Subagents):</strong> un Team son subagents especializados encadenados en etapas</li>
                     <li><strong>Tema 6 (Modelos):</strong> Quality-checker usa Haiku (rápido, muchas validaciones)</li>
                     <li><strong>Tema 4-5 (Hooks):</strong> Hooks aplican a cada agent del team — y son el único mecanismo con bloqueo <strong>garantizado</strong> (ver la nota sobre <code>authority</code> en el Paso 4)</li>
                 </ul>
 
                 <div class="tip-box">
                     <strong>💡 Tip Avanzado — Dead Letter Queues</strong>
-                    <p>Implementa <strong>dead letter queues</strong> para mensajes que no pueden ser procesados. Si un mensaje falla después de 3 intentos:</p>
-                    <pre><code>SendMessage({
-  to: "dead-letter-handler",
-  message: {
-    "original_message": {...},
-    "error": "...",
-    "attempts": 3,
-    "timestamp": "..."
-  }
-})</code><button class="copy-btn">Copiar</button></pre>
-                    <p>El <code>dead-letter-handler</code> alertará al operador humano.</p>
+                    <p>Implementa <strong>dead letter queues</strong> para los payloads que nadie puede procesar. Es el complemento natural de la regla "encolado ≠ entregado": un mensaje que se pierde en silencio es un pipeline que miente sobre su estado.</p>
+                    <pre><code>## Error Handling
+
+Si un payload no puede ser procesado después de 3 intentos, no lo descartes:
+regístralo para revisión humana.
+
+    {
+      "action": "DEAD_LETTER",
+      "original_payload": { },
+      "error": "Formato de fecha no reconocido tras 3 intentos",
+      "attempts": 3,
+      "stage": "transformation"
+    }
+
+El coordinador escribe estos registros en `output/dead_letters.jsonl` y avisa al
+operador humano al terminar el pipeline.</code><button class="copy-btn">Copiar</button></pre>
                 </div>
 
                 <h2>✅ Checklist de Finalización</h2>
@@ -2191,18 +2152,18 @@ wc -l /tmp/extracted_data.csv /tmp/transformed_data.csv output/ventas_cargadas.c
 
                 <p><strong>Funcionalidad</strong></p>
                 <ul class="checklist">
-                    <li><input type="checkbox" data-topic="8"> Extractor puede recibir y procesar mensaje START</li>
-                    <li><input type="checkbox" data-topic="8"> Transformer recibe datos de extractor y envía a loader</li>
-                    <li><input type="checkbox" data-topic="8"> Loader recibe datos transformados y notifica resultado</li>
-                    <li><input type="checkbox" data-topic="8"> Quality-checker monitorea todas las etapas</li>
-                    <li><input type="checkbox" data-topic="8"> Quality-checker puede BLOQUEAR si hay problemas</li>
+                    <li><input type="checkbox" data-topic="8"> Extractor extrae y devuelve su payload <code>START_TRANSFORM</code></li>
+                    <li><input type="checkbox" data-topic="8"> Transformer consume ese payload y devuelve <code>START_LOAD</code></li>
+                    <li><input type="checkbox" data-topic="8"> Loader carga a destino y devuelve <code>VERIFY_LOAD</code></li>
+                    <li><input type="checkbox" data-topic="8"> Quality-checker emite veredicto en cada etapa</li>
+                    <li><input type="checkbox" data-topic="8"> Un veredicto <code>BLOCKED</code> detiene el pipeline</li>
                 </ul>
 
                 <p><strong>Comunicación</strong></p>
                 <ul class="checklist">
+                    <li><input type="checkbox" data-topic="8"> Cada agent devuelve su payload JSON en el resultado final</li>
+                    <li><input type="checkbox" data-topic="8"> El skill coordinador releva cada payload a la etapa siguiente</li>
                     <li><input type="checkbox" data-topic="8"> <code>teammates:</code> documentado en el frontmatter de cada agent</li>
-                    <li><input type="checkbox" data-topic="8"> Comprobé que <code>SendMessage</code> entre agents hermanos falla con "no reachable"</li>
-                    <li><input type="checkbox" data-topic="8"> Cada agent devuelve su payload JSON en el resultado final, para que el principal releve</li>
                     <li><input type="checkbox" data-topic="8"> Mensajes incluyen contexto suficiente para el siguiente agent</li>
                     <li><input type="checkbox" data-topic="8"> Handoff protocol implementado (opcional — ver Paso 5)</li>
                 </ul>
@@ -2211,23 +2172,23 @@ wc -l /tmp/extracted_data.csv /tmp/transformed_data.csv output/ventas_cargadas.c
                 <ul class="checklist">
                     <li><input type="checkbox" data-topic="8"> Sé que <code>message</code> es un string, no un objeto (hay que serializar)</li>
                     <li><input type="checkbox" data-topic="8"> Distingo notificación de handoff, y sé cuándo usar cada uno</li>
-                    <li><input type="checkbox" data-topic="8"> Entiendo que <code>authority:</code> es convención cooperativa, no enforcement</li>
+                    <li><input type="checkbox" data-topic="8"> Entiendo que <code>authority:</code> y <code>teammates:</code> son convención, no enforcement</li>
                     <li><input type="checkbox" data-topic="8"> Sé que <code>tools:</code> es la única autoridad real del frontmatter</li>
                     <li><input type="checkbox" data-topic="8"> Puedo nombrar 2 casos de desarrollo donde un team gana, y 2 donde no</li>
-                    <li><input type="checkbox" data-topic="8"> Sé que <code>teammates:</code> tampoco crea rutas de mensajería — es convención, como <code>authority:</code></li>
                     <li><input type="checkbox" data-topic="8"> Distingo definición de agent (<code>.md</code>, se ve con <code>/agents</code>) de instancia viva (<code>ListAgents</code>)</li>
                     <li><input type="checkbox" data-topic="8"> Sé que un agent no espera mensajes: ejecuta su prompt y termina (pero queda reanudable)</li>
                     <li><input type="checkbox" data-topic="8"> Sé que el <code>agentId</code>, no el nombre del type, es la dirección de un subagent</li>
+                    <li><input type="checkbox" data-topic="8"> Sé dónde vive el peer-to-peer real: entre sesiones, no entre subagents hermanos</li>
                 </ul>
 
                 <p><strong>Prueba End-to-End</strong></p>
                 <ul class="checklist">
                     <li><input type="checkbox" data-topic="8"> Datos de muestra generados con <code>./generar-datos-muestra.sh</code></li>
-                    <li><input type="checkbox" data-topic="8"> Skill run-pipeline creado, con <code>subagent_type</code> y <code>JSON.stringify</code> corregidos</li>
+                    <li><input type="checkbox" data-topic="8"> Skill run-pipeline creado</li>
                     <li><input type="checkbox" data-topic="8"> Corrí <code>/run-pipeline</code> y el pipeline completó (extract → transform → load → validate)</li>
                     <li><input type="checkbox" data-topic="8"> Conteos verificados en disco: extraídas ≥ transformadas == cargadas</li>
                     <li><input type="checkbox" data-topic="8"> Errores son capturados y reportados</li>
-                    <li><input type="checkbox" data-topic="8"> Vi un BLOCK del quality-checker detener el pipeline (rango de filas sin ajustar)</li>
+                    <li><input type="checkbox" data-topic="8"> Provoqué un BLOCK subiendo el rango de filas y vi el pipeline detenerse</li>
                 </ul>
 
                 <div class="info-box">
