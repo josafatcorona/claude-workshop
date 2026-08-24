@@ -22,7 +22,7 @@ Los subagents del Tema 7 son "ejecutores": cada uno hace su tarea y reporta. Un 
 - **SendMessage:** herramienta para enviar mensajes a un agent alcanzable
 - **Coordinador:** el agente principal, que releva el payload de una etapa a la siguiente
 - **Handoff:** transferencia de una tarea completa (con su contexto) de un agent a otro
-- **ListAgents:** descubrir qué agents son alcanzables ahora mismo
+- **ListAgents:** herramienta (no slash command) para descubrir qué agents son alcanzables ahora mismo
 
 ---
 
@@ -397,25 +397,61 @@ authority: can-block
 ## Responsabilidad
 Validar la calidad de cada etapa y bloquear el pipeline si hay problemas críticos.
 
+## Umbrales
+
+    MIN_ROWS = 5
+    MAX_ROWS = 10000
+    COLUMNAS_CLAVE = fecha, producto, precio_unitario
+
+`cantidad` no está en COLUMNAS_CLAVE a propósito: puede venir vacía, y es el
+transformer quien decide si la descarta o la imputa.
+
+## Regla de decisión (no es opcional)
+
+Evalúa cada check de la etapa y márcalo PASS o FAIL. Después aplica esto
+mecánicamente:
+
+- ¿Algún check en FAIL? → `verdict: "BLOCKED"`. Sin excepciones.
+- Ningún FAIL → `verdict: "PASSED"`.
+
+No relajes un umbral porque el dataset parezca pequeño o de prueba. Si crees que
+está mal calibrado, bloquea igualmente y dilo en `recommendation` — ajustarlo es
+decisión del humano, no tuya.
+
+`checks_failed` lista TODOS los checks en FAIL. Si no está vacío, el verdict
+NO puede ser PASSED.
+
+### Ejemplo resuelto
+
+Payload con `row_count: 3`, siendo MIN_ROWS = 5:
+
+    3 < 5  →  el check row_count_out_of_range es FAIL
+    → verdict BLOCKED, y "row_count_out_of_range" va en checks_failed
+
+Tres filas no pasan este check. No lo redondees a PASSED.
+
 ## Qué Validar
 
 ### Fase de Extracción
-- ✓ Row count dentro del rango esperado (5-10000 filas)
-- ✓ Todas las columnas esperadas presentes
-- ✓ No valores NULL en columnas clave
-- ✓ Tipos de datos coinciden
+- `row_count_out_of_range` → FAIL si `row_count < 5` o `row_count > 10000`.
+  El rango es exactamente **5 a 10000**. Calcula la comparación con los números
+  del payload; no cites un rango de memoria.
+- `missing_columns` → FAIL si falta alguna columna esperada
+- `null_values_in_key_column` → FAIL si hay algún NULL o vacío en COLUMNAS_CLAVE
+- `type_mismatch` → FAIL si algún tipo de dato no coincide
 
 ### Fase de Transformación
-- ✓ Sin pérdida de datos injustificada (`rows_in ≈ row_count`)
-- ✓ Duplicados removidos correctamente
-- ✓ Fechas normalizadas correctamente
-- ✓ Cada fila descartada tiene su justificación en `decisions`
+- `unjustified_data_loss` → FAIL si `rows_in != row_count` y la diferencia no está
+  documentada en `decisions`
+- `duplicates_remain` → FAIL si quedan duplicados exactos
+- `dates_not_normalized` → FAIL si alguna fecha no está en ISO 8601
+- `undocumented_drop` → FAIL si alguna fila descartada no tiene justificación
 
 ### Fase de Carga
-- ✓ Integridad referencial mantenida
-- ✓ `rows_loaded == rows_expected`
-- ✓ La columna calculada `total` cuadra
-- ✓ No duplicados en destino
+- `referential_integrity_broken` → FAIL si se rompió la integridad referencial
+- `row_count_mismatch` → FAIL si `rows_loaded != rows_expected`
+- `total_column_wrong` → FAIL si `total != cantidad * precio_unitario` en alguna fila
+- `duplicates_in_destination` → FAIL si hay duplicados en destino
 
 ## Cómo Entregas tu Veredicto
 
@@ -428,7 +464,7 @@ JSON como resultado final — un solo veredicto por etapa:
       "verdict": "PASSED",
       "checks_passed": 4,
       "checks_failed": [],
-      "notes": "1 fila con cantidad vacia; el transformer debe decidir"
+      "notes": "12 filas, columnas y tipos correctos; la cantidad vacia no esta en COLUMNAS_CLAVE"
     }
 
 Si detectas un problema CRÍTICO, **bloquea**: el coordinador debe detener el
@@ -438,10 +474,10 @@ pipeline y no lanzar la siguiente etapa.
       "action": "VALIDATION_RESULT",
       "stage": "extraction",
       "verdict": "BLOCKED",
-      "checks_passed": 2,
+      "checks_passed": 3,
       "checks_failed": ["row_count_out_of_range"],
-      "reason": "12 filas, fuera del rango esperado 100-10000",
-      "recommendation": "Revisar la fuente o ajustar el rango esperado",
+      "reason": "3 filas, por debajo del minimo de 5",
+      "recommendation": "Revisar la fuente o ajustar MIN_ROWS",
       "severity": "CRITICAL"
     }
 
@@ -509,6 +545,40 @@ quiera o no el modelo.
 **Diseño robusto = las tres capas.** El `quality-checker` valida (cooperativo), no tiene
 Write (estructural), y un hook `PreToolUse` puede vetar escrituras a la tabla de producción
 si la validación no pasó (garantizado).
+
+### Una viñeta descriptiva no es una regla ejecutable
+
+Dentro del bloqueo cooperativo hay todavía una capa más de fragilidad: **que el agent
+aplique el criterio que le escribiste**.
+
+La primera versión de este `quality-checker` listaba su primer check así:
+
+    - ✓ Row count dentro del rango esperado (100-10000 filas)
+
+Con 12 filas, el agent devolvió `PASSED`, y justificó el veredicto diciendo *"12 filas,
+dentro del rango 5-10000"*. Se inventó el límite inferior — dos corridas seguidas, con
+el mismo número inventado. El umbral llevaba escrito `100` todo el tiempo.
+
+Por qué pasa: la viñeta **describe** un criterio, pero no dice qué hacer cuando falla.
+Nada mapea "check fallido" a `verdict: BLOCKED`, así que el modelo trata el rango como
+orientativo y lo ajusta a lo que tiene delante. Con un modelo pequeño — este agent corre
+en `haiku` — el efecto es mucho más marcado.
+
+Los cuatro arreglos, en orden de impacto:
+
+| Problema | Arreglo |
+|---|---|
+| El check no dice qué pasa si falla | Regla explícita: cualquier FAIL ⇒ `BLOCKED`, sin excepciones |
+| El umbral vive tras una indirección (`MIN_ROWS`) | Los números literales, en la línea del check |
+| "columnas clave" sin definir | Enumerarlas; un check de alcance ambiguo no se puede fallar |
+| El ejemplo de `PASSED` mostraba una anomalía con `checks_failed: []` | Que los ejemplos no contradigan la regla |
+
+El último es el más traicionero. Si tu ejemplo de salida enseña que *"detecté algo raro"*
+y *"todos los checks pasaron"* son compatibles, el agent lo copiará tal cual.
+
+**La moraleja general:** en el prompt de un agent, todo criterio que deba cumplirse necesita
+condición de fallo, consecuencia y números en el punto de uso. Una lista de viñetas con
+✓ se lee como una aspiración, y el modelo la trata como tal.
 
 ---
 
@@ -622,19 +692,49 @@ SendMessage({
 
 ---
 
-## Paso 6: Descubrir Agents - `/agents` y `ListAgents`
+## Paso 6: Descubrir Agents - Definiciones vs. Instancias
 
 Son dos cosas distintas, y confundirlas es el tropiezo más común del tema:
 
-| | Qué muestra |
-|---|---|
-| `/agents` | Las **definiciones** cargadas: los `.md` de `.claude/agents/`, con su model y tools |
-| `ListAgents` | Las **instancias vivas** ahora mismo, con su `agentId` |
+| | Qué es | Cómo se invoca |
+|---|---|---|
+| **Definiciones** | Los `.md` de `.claude/agents/`, con su model y tools | Pídeselas a Claude en prosa: *"lista los agent types disponibles"* |
+| **Instancias vivas** | Los agents lanzados en esta sesión, con su `agentId` | `ListAgents` — es una **tool**, no un slash command: también se pide en prosa |
+
+### `/agents` fue retirado
+
+En versiones anteriores de Claude Code abría un wizard interactivo para listar y crear
+agents. Hoy responde:
+
+```
+The /agents wizard has been removed.
+
+Ask Claude to create or update subagents for you (e.g. "create a code-reviewer subagent that ..."),
+or edit the files directly:
+  • .claude/agents/       (this project)
+  • ~/.claude/agents/     (all projects)
+```
+
+Los sustitutos:
+
+- **Ver** las definiciones cargadas → pídeselas a Claude en prosa (el agente principal
+  tiene la lista inyectada en su contexto: nombre, description y tools de cada una), o
+  `ls .claude/agents/` para ver los archivos.
+- **Crear o editar** una → dilo en prosa (*"crea un subagent que…"*) o edita el `.md` a mano.
+
+### `ListAgents` tampoco se teclea como comando
+
+No existe `/ListAgents`. Es una **herramienta que invoca el modelo**, igual que `Read` o
+`Bash`: tú escribes *"corre ListAgents"* o *"¿qué agents son alcanzables ahora?"*, y Claude
+la llama por ti. (Escribir solo `ListAgents` en el prompt también funciona — el modelo
+interpreta la intención — pero no es un comando del CLI.)
 
 Antes de lanzar nada, `ListAgents` está vacío — y eso es correcto, no un error:
 
 ```
-No reachable agents
+This session is t1-4a [89b752] — the name other sessions use to message it.
+
+No reachable agents — no other Claude session is running on this machine right now.
 ```
 
 Los `.md` son *tipos* de agent, no procesos. Después de lanzar la primera etapa:
@@ -771,7 +871,7 @@ interpreta ese pseudocódigo.
 ### Qué observar mientras corre
 
 **1. `ListAgents` vacío al principio.** Antes de lanzar nada devuelve `No reachable agents`.
-Es lo esperado: aún no hay instancias. Para ver las definiciones cargadas, `/agents`.
+Es lo esperado: aún no hay instancias. Para ver las definiciones cargadas, pídeselas a Claude en prosa (`/agents` fue retirado).
 
 **2. Cada etapa termina en cuanto entrega su payload.** Ningún agent se queda esperando; por
 eso el coordinador lanza la siguiente etapa cuando tiene el payload de la anterior.
@@ -802,7 +902,7 @@ el entregable del ejercicio, no el CSV.
 ### Cómo comprobarlo — 4 niveles
 
 ```bash
-# 1. Definiciones cargadas        → /agents      (los 4, con model y tools)
+# 1. Definiciones cargadas        → pideselas a Claude en prosa  (los 4, con model y tools)
 # 2. Instancias vivas             → ListAgents   (running / completed + agentId)
 # 3. Artefactos y conteos
 wc -l /tmp/extracted_data.csv /tmp/transformed_data.csv output/ventas_cargadas.csv
@@ -813,10 +913,15 @@ Para el nivel 3, que los conteos cuadren: `extraídas ≥ transformadas == carga
 
 ### Variante: provocar un BLOCK
 
-Sube el rango esperado de filas a `100-10000` en `quality-checker.md` y vuelve a correr. Con
-12 filas el veredicto será `BLOCKED` y el coordinador debe **detener el pipeline** ahí mismo.
-Es la forma de comprobar el ítem "bloqueos del quality-checker detienen el pipeline" —
-y de ver que el bloqueo es cooperativo: funciona porque el coordinador respeta el veredicto.
+Cambia `MIN_ROWS = 5` por `MIN_ROWS = 100` en `quality-checker.md` — y con él el literal
+de la línea del check, que también dice `5` — y vuelve a correr. Con 12 filas el veredicto
+será `BLOCKED` y el coordinador debe **detener el pipeline** ahí mismo. Es la forma de
+comprobar el ítem "bloqueos del quality-checker detienen el pipeline" — y de ver que el
+bloqueo es cooperativo: funciona porque el coordinador respeta el veredicto.
+
+Si cambias solo el número del bloque `## Umbrales` y dejas el literal del check sin tocar,
+tienes un buen accidente didáctico: el agent puede seguir validando contra el `5`. Es
+exactamente el fallo de la sección *"Una viñeta descriptiva no es una regla ejecutable"*.
 
 ### Variante: transformaciones con efecto real
 
@@ -972,7 +1077,8 @@ sabe, es señal de que ese trabajo pertenecía a un solo agent.
 - [ ] Entiendo que `authority:` y `teammates:` son convención, no enforcement
 - [ ] Sé que `tools:` es la única autoridad real del frontmatter
 - [ ] Puedo nombrar 2 casos de desarrollo donde un team gana, y 2 donde no
-- [ ] Distingo definición de agent (`.md`, se ve con `/agents`) de instancia viva (`ListAgents`)
+- [ ] Distingo definición de agent (`.md`, se lista pidiéndoselo a Claude) de instancia viva (`ListAgents`)
+- [ ] Sé que `/agents` fue retirado y que `ListAgents` es una tool, no un slash command
 - [ ] Sé que un agent no espera mensajes: ejecuta su prompt y termina (pero queda reanudable)
 - [ ] Sé que el `agentId`, no el nombre del type, es la dirección de un subagent
 - [ ] Sé dónde vive el peer-to-peer real: entre sesiones, no entre subagents hermanos

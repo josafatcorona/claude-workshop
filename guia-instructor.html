@@ -2037,8 +2037,8 @@ Traspaso rutinario                Transfiere la responsabilidad entera</code></p
   "stage": "extraction",
   "verdict": "BLOCKED",
   "checks_failed": ["row_count_out_of_range"],
-  "reason": "12 filas, fuera del rango esperado 100-10000",
-  "recommendation": "Revisar la fuente o ajustar el rango esperado",
+  "reason": "12 filas, por debajo del minimo de 100",
+  "recommendation": "Revisar la fuente o ajustar MIN_ROWS",
   "severity": "CRITICAL"
 }
 
@@ -2106,7 +2106,7 @@ PIERDE cuando el aislamiento es un obstáculo a superar.</code></pre>
                         <p><strong>Este es el momento más valioso del tema.</strong> El pipeline corre de punta a punta y cada etapa deja un artefacto verificable en disco. Córrelo delante de ellos: lo que aprenden viéndolo no se transmite en slides.</p>
 
                         <div class="instructor-note">
-                            <p><strong>🎯 Antes de la clase:</strong> corre <code>./generar-datos-muestra.sh .</code> en el proyecto de práctica y verifica que existe <code>data/ventas_2024.csv</code> con 12 filas. Con el rango del material (<code>5-10000</code>) el camino feliz completa. <strong>Reserva 2 minutos al final para la variante del BLOCK</strong> — es un ítem del checklist.</p>
+                            <p><strong>🎯 Antes de la clase:</strong> corre <code>./generar-datos-muestra.sh .</code> en el proyecto de práctica y verifica que existe <code>data/ventas_2024.csv</code> con 12 filas. Con <code>MIN_ROWS = 5</code> el camino feliz completa. <strong>Reserva 2 minutos al final para la variante del BLOCK</strong> — es un ítem del checklist.</p>
                         </div>
 
                         <p><strong>Guion de la demo:</strong></p>
@@ -2153,7 +2153,10 @@ carga              11    output/ventas_cargadas.csv  (+ columna total)</code></p
                             <p>La fila descartada es un valor faltante <strong>sembrado a propósito</strong>. Fuerza una decisión del quality-checker: su regla dice "sin pérdida de datos injustificada", pero el dato es irrecuperable. Lo esperable es <strong>PASSED</strong> argumentando que <code>cantidad</code> es necesaria para el GMV y no se puede imputar sin arbitrariedad — con nota de que producción necesita política explícita de imputación vs. descarte. <strong>Ese razonamiento es el entregable, no el CSV.</strong> Si algún participante obtiene BLOCKED con buena justificación, también es correcto: haz que comparen criterios.</p>
                         </div>
 
-                        <p><strong>Variante del BLOCK (2 min):</strong> sube el rango a <code>100-10000</code> en <code>quality-checker.md</code> y vuelve a correr. Con 12 filas el veredicto es <code>BLOCKED</code> y el coordinador se detiene. Aprovecha para repetir que ese bloqueo es <em>cooperativo</em>.</p>
+                        <p><strong>Variante del BLOCK (2 min):</strong> cambia <code>MIN_ROWS = 5</code> a <code>100</code> en <code>quality-checker.md</code>, <strong>y también el literal <code>5</code> de la línea del check</strong>. Vuelve a correr: con 12 filas el veredicto es <code>BLOCKED</code> y el coordinador se detiene. Aprovecha para repetir que ese bloqueo es <em>cooperativo</em>.</p>
+                        <div class="warning-box">
+                            <p><strong>Si solo cambias uno de los dos sitios, el agent puede seguir dando <code>PASSED</code></strong> — y eso es oro para la clase: es el fallo real que documenta <em>"Una viñeta descriptiva no es una regla ejecutable"</em>. La primera versión de este material tenía el umbral en <code>100</code> y el agent lo ignoró dos corridas seguidas, inventando un rango <code>5-10000</code>. Si te sobra tiempo, provócalo a propósito antes de mostrar el arreglo.</p>
+                        </div>
 
                         <p><strong>Si te sobra tiempo:</strong> corre el pipeline sobre <code>data/ventas_2024_dirty.csv</code> (17 filas → 14). Con el dataset limpio, <code>removed_duplicates</code> y <code>normalized_dates</code> se reportan pero no hacen nada — el sucio las ejercita de verdad.</p>
                     </div>
@@ -2228,7 +2231,7 @@ carga              11    output/ventas_cargadas.csv  (+ columna total)</code></p
                             <li>Crear el skill <code>run-pipeline</code> — coordinando etapa por etapa con <code>subagent_type</code></li>
                             <li>Correr <code>/run-pipeline</code> de punta a punta y anotar los conteos de cada etapa</li>
                             <li>Comprobar los 4 niveles: <code>/agents</code> · <code>ListAgents</code> · conteos en disco · veredicto del quality-checker</li>
-                            <li>Subir el rango de filas a <code>100-10000</code> y volver a correr para ver un <code>BLOCKED</code></li>
+                            <li>Subir <code>MIN_ROWS</code> a <code>100</code> (en los dos sitios) y volver a correr para ver un <code>BLOCKED</code></li>
                         </ol>
                     </div>
 

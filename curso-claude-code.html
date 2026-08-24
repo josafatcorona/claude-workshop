@@ -1397,7 +1397,7 @@ Guarda reporte en output/report_{{file}}.md
                     <li><strong>SendMessage:</strong> herramienta para enviar mensajes a un agent alcanzable</li>
                     <li><strong>Coordinador:</strong> el agente principal, que releva el payload de una etapa a la siguiente</li>
                     <li><strong>Handoff:</strong> transferencia de una tarea completa (con su contexto) de un agent a otro</li>
-                    <li><strong>ListAgents:</strong> descubrir qué agents son alcanzables ahora mismo</li>
+                    <li><strong>ListAgents:</strong> herramienta (no slash command) para descubrir qué agents son alcanzables ahora mismo</li>
                 </ul>
 
                 <div class="warning-box">
@@ -1716,25 +1716,61 @@ authority: can-block
 ## Responsabilidad
 Validar la calidad de cada etapa y bloquear el pipeline si hay problemas críticos.
 
+## Umbrales
+
+    MIN_ROWS = 5
+    MAX_ROWS = 10000
+    COLUMNAS_CLAVE = fecha, producto, precio_unitario
+
+`cantidad` no está en COLUMNAS_CLAVE a propósito: puede venir vacía, y es el
+transformer quien decide si la descarta o la imputa.
+
+## Regla de decisión (no es opcional)
+
+Evalúa cada check de la etapa y márcalo PASS o FAIL. Después aplica esto
+mecánicamente:
+
+- ¿Algún check en FAIL? → `verdict: "BLOCKED"`. Sin excepciones.
+- Ningún FAIL → `verdict: "PASSED"`.
+
+No relajes un umbral porque el dataset parezca pequeño o de prueba. Si crees que
+está mal calibrado, bloquea igualmente y dilo en `recommendation` — ajustarlo es
+decisión del humano, no tuya.
+
+`checks_failed` lista TODOS los checks en FAIL. Si no está vacío, el verdict
+NO puede ser PASSED.
+
+### Ejemplo resuelto
+
+Payload con `row_count: 3`, siendo MIN_ROWS = 5:
+
+    3 &lt; 5  →  el check row_count_out_of_range es FAIL
+    → verdict BLOCKED, y "row_count_out_of_range" va en checks_failed
+
+Tres filas no pasan este check. No lo redondees a PASSED.
+
 ## Qué Validar
 
 ### Fase de Extracción
-- ✓ Row count dentro del rango esperado (5-10000 filas)
-- ✓ Todas las columnas esperadas presentes
-- ✓ No valores NULL en columnas clave
-- ✓ Tipos de datos coinciden
+- `row_count_out_of_range` → FAIL si `row_count &lt; 5` o `row_count &gt; 10000`.
+  El rango es exactamente **5 a 10000**. Calcula la comparación con los números
+  del payload; no cites un rango de memoria.
+- `missing_columns` → FAIL si falta alguna columna esperada
+- `null_values_in_key_column` → FAIL si hay algún NULL o vacío en COLUMNAS_CLAVE
+- `type_mismatch` → FAIL si algún tipo de dato no coincide
 
 ### Fase de Transformación
-- ✓ Sin pérdida de datos injustificada (`rows_in ≈ row_count`)
-- ✓ Duplicados removidos correctamente
-- ✓ Fechas normalizadas correctamente
-- ✓ Cada fila descartada tiene su justificación en `decisions`
+- `unjustified_data_loss` → FAIL si `rows_in != row_count` y la diferencia no está
+  documentada en `decisions`
+- `duplicates_remain` → FAIL si quedan duplicados exactos
+- `dates_not_normalized` → FAIL si alguna fecha no está en ISO 8601
+- `undocumented_drop` → FAIL si alguna fila descartada no tiene justificación
 
 ### Fase de Carga
-- ✓ Integridad referencial mantenida
-- ✓ `rows_loaded == rows_expected`
-- ✓ La columna calculada `total` cuadra
-- ✓ No duplicados en destino
+- `referential_integrity_broken` → FAIL si se rompió la integridad referencial
+- `row_count_mismatch` → FAIL si `rows_loaded != rows_expected`
+- `total_column_wrong` → FAIL si `total != cantidad * precio_unitario` en alguna fila
+- `duplicates_in_destination` → FAIL si hay duplicados en destino
 
 ## Cómo Entregas tu Veredicto
 
@@ -1747,7 +1783,7 @@ JSON como resultado final — un solo veredicto por etapa:
       "verdict": "PASSED",
       "checks_passed": 4,
       "checks_failed": [],
-      "notes": "1 fila con cantidad vacia; el transformer debe decidir"
+      "notes": "12 filas, columnas y tipos correctos; la cantidad vacia no esta en COLUMNAS_CLAVE"
     }
 
 Si detectas un problema CRÍTICO, **bloquea**: el coordinador debe detener el
@@ -1757,10 +1793,10 @@ pipeline y no lanzar la siguiente etapa.
       "action": "VALIDATION_RESULT",
       "stage": "extraction",
       "verdict": "BLOCKED",
-      "checks_passed": 2,
+      "checks_passed": 3,
       "checks_failed": ["row_count_out_of_range"],
-      "reason": "12 filas, fuera del rango esperado 100-10000",
-      "recommendation": "Revisar la fuente o ajustar el rango esperado",
+      "reason": "3 filas, por debajo del minimo de 5",
+      "recommendation": "Revisar la fuente o ajustar MIN_ROWS",
       "severity": "CRITICAL"
     }
 
@@ -1800,6 +1836,25 @@ Si el mismo problema aparece 3+ veces, no sigas reintentando: escala al humano.
 │ authority:    │ Rol dentro del team      │ Bloqueo COOPERATIVO     │
 └───────────────┴──────────────────────────┴─────────────────────────┘</code><button class="copy-btn">Copiar</button></pre>
                             <p><strong>Diseño robusto = las tres capas.</strong> El quality-checker valida (cooperativo), no tiene Write (estructural), y un hook <code>PreToolUse</code> puede vetar escrituras a producción si la validación no pasó (garantizado).</p>
+
+                            <h4>Una viñeta descriptiva no es una regla ejecutable</h4>
+                            <p>Dentro del bloqueo cooperativo hay todavía una capa más de fragilidad: <strong>que el agent aplique el criterio que le escribiste</strong>.</p>
+                            <p>La primera versión de este <code>quality-checker</code> listaba su primer check así:</p>
+                            <pre><code>- ✓ Row count dentro del rango esperado (100-10000 filas)</code><button class="copy-btn">Copiar</button></pre>
+                            <p>Con 12 filas, el agent devolvió <code>PASSED</code>, y justificó el veredicto diciendo <em>"12 filas, dentro del rango 5-10000"</em>. Se inventó el límite inferior — dos corridas seguidas, con el mismo número inventado. El umbral llevaba escrito <code>100</code> todo el tiempo.</p>
+                            <p><strong>Por qué pasa:</strong> la viñeta <em>describe</em> un criterio, pero no dice qué hacer cuando falla. Nada mapea "check fallido" a <code>verdict: BLOCKED</code>, así que el modelo trata el rango como orientativo y lo ajusta a lo que tiene delante. Con un modelo pequeño — este agent corre en <code>haiku</code> — el efecto es mucho más marcado.</p>
+                            <p>Los cuatro arreglos, en orden de impacto:</p>
+                            <table>
+                                <tr><th>Problema</th><th>Arreglo</th></tr>
+                                <tr><td>El check no dice qué pasa si falla</td><td>Regla explícita: cualquier FAIL ⇒ <code>BLOCKED</code>, sin excepciones</td></tr>
+                                <tr><td>El umbral vive tras una indirección (<code>MIN_ROWS</code>)</td><td>Los números literales, en la línea del check</td></tr>
+                                <tr><td>"columnas clave" sin definir</td><td>Enumerarlas; un check de alcance ambiguo no se puede fallar</td></tr>
+                                <tr><td>El ejemplo de <code>PASSED</code> mostraba una anomalía con <code>checks_failed: []</code></td><td>Que los ejemplos no contradigan la regla</td></tr>
+                            </table>
+                            <p>El último es el más traicionero. Si tu ejemplo de salida enseña que <em>"detecté algo raro"</em> y <em>"todos los checks pasaron"</em> son compatibles, el agent lo copiará tal cual.</p>
+                            <div class="warning-box">
+                                <p><strong>La moraleja general:</strong> en el prompt de un agent, todo criterio que deba cumplirse necesita <strong>condición de fallo, consecuencia y números en el punto de uso</strong>. Una lista de viñetas con ✓ se lee como una aspiración, y el modelo la trata como tal.</p>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1899,19 +1954,38 @@ ambiguas), devuelve un HANDOFF: el coordinador se lo pasa entero al transformer.
 
                 <div class="collapsible">
                     <div class="collapsible-header">
-                        <h3>🔍 Paso 6: Descubrir Agents — <code>/agents</code> y <code>ListAgents</code></h3>
+                        <h3>🔍 Paso 6: Descubrir Agents — Definiciones vs. Instancias</h3>
                         <span class="collapsible-icon">▼</span>
                     </div>
                     <div class="collapsible-content">
                         <p>Son dos cosas distintas, y confundirlas es el tropiezo más común del tema:</p>
                         <table>
-                            <tr><th></th><th>Qué muestra</th></tr>
-                            <tr><td><code>/agents</code></td><td>Las <strong>definiciones</strong> cargadas: los <code>.md</code> de <code>.claude/agents/</code>, con su model y tools</td></tr>
-                            <tr><td><code>ListAgents</code></td><td>Las <strong>instancias vivas</strong> ahora mismo, con su <code>agentId</code></td></tr>
+                            <tr><th></th><th>Qué es</th><th>Cómo se invoca</th></tr>
+                            <tr><td><strong>Definiciones</strong></td><td>Los <code>.md</code> de <code>.claude/agents/</code>, con su model y tools</td><td>Pídeselas a Claude en prosa: <em>"lista los agent types disponibles"</em></td></tr>
+                            <tr><td><strong>Instancias vivas</strong></td><td>Los agents lanzados en esta sesión, con su <code>agentId</code></td><td><code>ListAgents</code> — es una <strong>tool</strong>, no un slash command: también se pide en prosa</td></tr>
                         </table>
 
+                        <div class="warning-box">
+                            <strong>⚠️ <code>/agents</code> fue retirado</strong>
+                            <p>En versiones anteriores de Claude Code abría un wizard interactivo para listar y crear agents. Hoy responde:</p>
+                            <pre><code>The /agents wizard has been removed.
+
+Ask Claude to create or update subagents for you (e.g. "create a code-reviewer subagent that ..."),
+or edit the files directly:
+  • .claude/agents/       (this project)
+  • ~/.claude/agents/     (all projects)</code></pre>
+                            <p>Los sustitutos: para <strong>ver</strong> las definiciones cargadas, pídeselas a Claude en prosa (el agente principal tiene la lista inyectada en su contexto: nombre, description y tools de cada una), o <code>ls .claude/agents/</code> para ver los archivos. Para <strong>crear o editar</strong> una, dilo en prosa (<em>"crea un subagent que…"</em>) o edita el <code>.md</code> a mano.</p>
+                        </div>
+
+                        <div class="info-box">
+                            <strong>ℹ️ <code>ListAgents</code> tampoco se teclea como comando</strong>
+                            <p>No existe <code>/ListAgents</code>. Es una <strong>herramienta que invoca el modelo</strong>, igual que <code>Read</code> o <code>Bash</code>: tú escribes <em>"corre ListAgents"</em> o <em>"¿qué agents son alcanzables ahora?"</em>, y Claude la llama por ti. (Escribir solo <code>ListAgents</code> en el prompt también funciona — el modelo interpreta la intención — pero no es un comando del CLI.)</p>
+                        </div>
+
                         <p>Antes de lanzar nada, <code>ListAgents</code> está vacío — y eso es correcto, no un error:</p>
-                        <pre><code>No reachable agents</code></pre>
+                        <pre><code>This session is t1-4a [89b752] — the name other sessions use to message it.
+
+No reachable agents — no other Claude session is running on this machine right now.</code></pre>
                         <p>Los <code>.md</code> son <em>tipos</em> de agent, no procesos. Después de lanzar la primera etapa:</p>
                         <pre><code>await ListAgents()
 
@@ -2039,7 +2113,7 @@ Un agent terminado sigue siendo reanudable (`Resuming agent ...`).
 
                         <h4>Qué observar mientras corre</h4>
                         <ol>
-                            <li><strong><code>ListAgents</code> vacío al principio.</strong> Antes de lanzar nada devuelve <code>No reachable agents</code>. Es lo esperado: aún no hay instancias. Para ver las definiciones cargadas, <code>/agents</code>.</li>
+                            <li><strong><code>ListAgents</code> vacío al principio.</strong> Antes de lanzar nada devuelve <code>No reachable agents</code>. Es lo esperado: aún no hay instancias. Para ver las definiciones cargadas, pídeselas a Claude en prosa (<code>/agents</code> fue retirado).</li>
                             <li><strong>Cada etapa termina en cuanto entrega su payload.</strong> Ningún agent se queda esperando; por eso el coordinador lanza la siguiente etapa cuando tiene el payload de la anterior.</li>
                             <li><strong>El coordinador es visible en la traza.</strong> Verás alternarse <code>Agent(...)</code> y la lectura del payload devuelto. Ese ida y vuelta <em>es</em> el pipeline.</li>
                             <li><strong>Los artefactos aparecen en disco en orden:</strong> <code>/tmp/extracted_data.csv</code>, luego <code>/tmp/transformed_data.csv</code>, luego <code>output/ventas_cargadas.csv</code>.</li>
@@ -2058,7 +2132,7 @@ carga              11    output/ventas_cargadas.csv  (+ columna total)</code></p
                         </div>
 
                         <h4>Cómo comprobarlo — 4 niveles</h4>
-                        <pre><code># 1. Definiciones cargadas   → /agents      (los 4, con model y tools)
+                        <pre><code># 1. Definiciones cargadas   → pideselas a Claude en prosa  (los 4, con model y tools)
 # 2. Instancias vivas        → ListAgents   (running / completed + agentId)
 # 3. Artefactos y conteos
 wc -l /tmp/extracted_data.csv /tmp/transformed_data.csv output/ventas_cargadas.csv
@@ -2066,7 +2140,10 @@ wc -l /tmp/extracted_data.csv /tmp/transformed_data.csv output/ventas_cargadas.c
                         <p>Para el nivel 3, que los conteos cuadren: <code>extraídas ≥ transformadas == cargadas</code>.</p>
 
                         <h4>Variante: provocar un BLOCK</h4>
-                        <p>Sube el rango esperado de filas a <code>100-10000</code> en <code>quality-checker.md</code> y vuelve a correr. Con 12 filas el veredicto será <code>BLOCKED</code> y el coordinador debe <strong>detener el pipeline</strong> ahí mismo. Es la forma de comprobar el ítem "bloqueos del quality-checker detienen el pipeline" — y de ver que el bloqueo es <em>cooperativo</em>: funciona porque el coordinador respeta el veredicto.</p>
+                        <p>Cambia <code>MIN_ROWS = 5</code> por <code>MIN_ROWS = 100</code> en <code>quality-checker.md</code> — y con él el literal de la línea del check, que también dice <code>5</code> — y vuelve a correr. Con 12 filas el veredicto será <code>BLOCKED</code> y el coordinador debe <strong>detener el pipeline</strong> ahí mismo. Es la forma de comprobar el ítem "bloqueos del quality-checker detienen el pipeline" — y de ver que el bloqueo es <em>cooperativo</em>: funciona porque el coordinador respeta el veredicto.</p>
+                        <div class="tip-box">
+                            <p>Si cambias solo el número del bloque <code>## Umbrales</code> y dejas el literal del check sin tocar, tienes un buen accidente didáctico: el agent puede seguir validando contra el <code>5</code>. Es exactamente el fallo de <em>"Una viñeta descriptiva no es una regla ejecutable"</em>.</p>
+                        </div>
 
                         <h4>Variante: transformaciones con efecto real</h4>
                         <p>Con <code>ventas_2024.csv</code>, el transformer reporta <code>removed_duplicates</code> y <code>normalized_dates</code>… y ninguna hace nada (ya está en ISO, sin duplicados). Para que el pipeline haga trabajo observable, usa el dataset sucio que genera el script:</p>
@@ -2230,7 +2307,8 @@ operador humano al terminar el pipeline.</code><button class="copy-btn">Copiar</
                     <li><input type="checkbox" data-topic="8"> Entiendo que <code>authority:</code> y <code>teammates:</code> son convención, no enforcement</li>
                     <li><input type="checkbox" data-topic="8"> Sé que <code>tools:</code> es la única autoridad real del frontmatter</li>
                     <li><input type="checkbox" data-topic="8"> Puedo nombrar 2 casos de desarrollo donde un team gana, y 2 donde no</li>
-                    <li><input type="checkbox" data-topic="8"> Distingo definición de agent (<code>.md</code>, se ve con <code>/agents</code>) de instancia viva (<code>ListAgents</code>)</li>
+                    <li><input type="checkbox" data-topic="8"> Distingo definición de agent (<code>.md</code>, se lista pidiéndoselo a Claude) de instancia viva (<code>ListAgents</code>)</li>
+                    <li><input type="checkbox" data-topic="8"> Sé que <code>/agents</code> fue retirado y que <code>ListAgents</code> es una tool, no un slash command</li>
                     <li><input type="checkbox" data-topic="8"> Sé que un agent no espera mensajes: ejecuta su prompt y termina (pero queda reanudable)</li>
                     <li><input type="checkbox" data-topic="8"> Sé que el <code>agentId</code>, no el nombre del type, es la dirección de un subagent</li>
                     <li><input type="checkbox" data-topic="8"> Sé dónde vive el peer-to-peer real: entre sesiones, no entre subagents hermanos</li>
