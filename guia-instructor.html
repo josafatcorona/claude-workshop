@@ -1825,7 +1825,7 @@ authority:→ bloqueo COOPERATIVO  (el modelo decide obedecer)</code></pre>
 ✓ Control centralizado</code></pre>
                             </div>
                             <div>
-                                <h5>Tema 8 - Agent Teams (Flujo Distribuido)</h5>
+                                <h5>Tema 8 - Agent Teams (el modelo que enseña el tema)</h5>
                                 <pre><code>TÚ → [Spawn Team]
         ↓
     [Agent A] → (SendMessage) → [Agent B]
@@ -1836,8 +1836,8 @@ authority:→ bloqueo COOPERATIVO  (el modelo decide obedecer)</code></pre>
 
 ✓ Comunicación directa entre agents
 ✓ Paralelización posible
-✓ Orquestador solo inicia, no espera cada paso
-✓ Arquitectura más escalable</code></pre>
+✓ Orquestador solo inicia, no espera cada paso</code></pre>
+                                <p style="margin-top:.6rem"><strong>⚠️ Advertencia para el instructor:</strong> este diagrama es el modelo <em>conceptual</em>. Entre subagents <strong>hermanos de una misma sesión no se cumple</strong> — <code>SendMessage</code> entre ellos falla con <code>"no reachable"</code>. Lo real es que el principal releva cada payload por <code>agentId</code>. Ver el bloque "Demo en vivo" más abajo: <strong>enséñalo, no lo esquives</strong>.</p>
                             </div>
                         </div>
                     </div>
@@ -2078,6 +2078,67 @@ PIERDE cuando el aislamiento es un obstáculo a superar.</code></pre>
                         </div>
                     </div>
 
+                    <div class="script-section">
+                        <span class="script-label action">Demo en Vivo - Paso 8: Ejecutar el pipeline (7 minutos)</span>
+
+                        <p><strong>Este es el momento más valioso del tema.</strong> El pipeline "falla" de una forma instructiva, y el fallo enseña más que el éxito. No lo esquives ni lo pre-arregles: córrelo delante de ellos.</p>
+
+                        <div class="instructor-note">
+                            <p><strong>🎯 Antes de la clase:</strong> corre <code>./generar-datos-muestra.sh .</code> en el proyecto de práctica y verifica que existe <code>data/ventas_2024.csv</code> con 12 filas. Y decide si vas a mostrar el BLOCK (rango 100-10000 sin tocar) o el camino feliz (bájalo a 5-10000). <strong>Recomendado: muestra el BLOCK primero</strong> — es un ítem del checklist.</p>
+                        </div>
+
+                        <p><strong>Guion de la demo:</strong></p>
+                        <ol>
+                            <li><strong>Pregunta antes de correr:</strong> <em>"¿Qué creen que devuelve <code>ListAgents</code> ahora mismo?"</em> Casi todos dirán "los 4 agents". Córrelo: <code>No reachable agents</code>. <span class="emphasis">Ahí aterriza la distinción definición vs. instancia.</span> Los <code>.md</code> son <em>types</em>; <code>/agents</code> los muestra, <code>ListAgents</code> muestra instancias vivas.</li>
+                            <li><strong>Corre <code>/run-pipeline</code></strong> y lanza los 4 agents en paralelo.</li>
+                            <li><strong>Corre <code>ListAgents</code> otra vez:</strong> los 4 <code>running</code>. Deja que celebren.</li>
+                            <li><strong>Espera ~15 segundos y vuelve a correrlo.</strong> Tres ya están <code>completed</code> sin haber hecho nada. Lee sus resultados en voz alta: <em>"no he recibido START_TRANSFORM"</em>, <em>"me quedo idle"</em>, <em>"aguardando mensajes"</em>.</li>
+                            <li><strong>La pregunta clave:</strong> <em>"¿Por qué terminaron?"</em> Respuesta: <span class="emphasis">no existe primitiva de espera</span>. Un agent ejecuta su prompt y termina. "Escuchar mensaje de extractor" no es algo que un agent pueda hacer.</li>
+                            <li><strong>Espera al extractor</strong> (~60s: leer, contar, copiar). Su resultado: <code>SendMessage a transformer → no reachable</code>. Cuando fue a notificar, ya no quedaba nadie.</li>
+                            <li><strong>Remata:</strong> intenta tú mismo <code>SendMessage({to: "transformer"})</code> → también falla. Luego con el <code>agentId</code> → <code>Resuming agent</code>. <span class="emphasis">El nombre del type no es una dirección; el agentId sí.</span></li>
+                        </ol>
+
+                        <div class="golden-rule">
+                            <h4>📜 Lo que se llevan de la demo</h4>
+                            <pre><code>teammates: NO crea rutas de mensajería.
+Es convención documental — igual que authority:.
+
+Los 4 agents son HERMANOS, hijos del principal.
+No son peers entre sí.
+
+La única autoridad real del frontmatter sigue
+siendo tools:.</code></pre>
+                        </div>
+
+                        <div class="warning-box">
+                            <strong>⚠️ Errata del material que debes mencionar</strong>
+                            <p>El Paso 4 dice que Claude Code interpreta <code>teammates</code>. Se carga, sí — pero <strong>no habilita mensajería entre subagents hermanos</strong>. Es la misma lección que <code>authority: can-block</code>, aplicada a un campo que el propio tema presentaba como "real". Admitirlo en clase refuerza la credibilidad del resto.</p>
+                        </div>
+
+                        <p><strong>El patrón que sí funciona</strong> — el principal releva por <code>agentId</code>:</p>
+                        <pre><code>extractor   ──payload──►  [principal]  ──SendMessage(agentId)──►  transformer
+transformer ──payload──►  [principal]  ──SendMessage(agentId)──►  loader
+loader      ──payload──►  [principal]  ──SendMessage(agentId)──►  quality-checker</code></pre>
+                        <p>Requiere que cada agent <strong>devuelva su payload JSON en el resultado final</strong> en vez de intentar un <code>SendMessage</code> condenado a fallar.</p>
+
+                        <div class="instructor-note">
+                            <p><strong>🎯 Frase de cierre (la que se llevan):</strong> <em>"Sí, acabamos de reinventar el hub-and-spoke del Tema 7 — y reconocerlo ES la lección. El peer-to-peer real de <code>SendMessage</code> existe, pero entre <strong>sesiones</strong> de Claude Code, no entre subagents de una misma sesión. Sepan qué garantía tienen antes de diseñar sobre ella."</em></p>
+                        </div>
+
+                        <p><strong>Resultado esperado end-to-end</strong> (camino feliz):</p>
+                        <pre><code>etapa            filas   artefacto
+extracción         12    /tmp/extracted_data.csv
+transformación     11    /tmp/transformed_data.csv   (descarta 1: cantidad vacía)
+carga              11    output/ventas_cargadas.csv  (+ columna total)</code></pre>
+
+                        <div class="tip-box">
+                            <strong>💡 El verdadero entregable del ejercicio</strong>
+                            <p>La fila descartada es un valor faltante <strong>sembrado a propósito</strong>. Fuerza una decisión del quality-checker: su regla dice "ninguna pérdida de datos", pero el dato es irrecuperable. El nuestro dio <strong>PASSED</strong> argumentando que <code>cantidad</code> es necesaria para GMV y no se puede imputar sin arbitrariedad — y anotó que producción necesita política explícita de imputación vs. descarte. <strong>Ese razonamiento es el entregable, no el CSV.</strong> Si algún participante obtiene BLOCK con buena justificación, también es correcto: haz que comparen criterios.</p>
+                        </div>
+
+                        <p><strong>Si te sobra tiempo:</strong> corre el pipeline sobre <code>data/ventas_2024_dirty.csv</code> (17 filas → 14). Con el dataset limpio, <code>removed_duplicates</code> y <code>normalized_dates</code> se reportan pero no hacen nada — el sucio las ejercita de verdad.</p>
+                    </div>
+
                     <div class="qa-box">
                         <h5>❓ Preguntas Frecuentes del Tema 8</h5>
 
@@ -2110,6 +2171,31 @@ PIERDE cuando el aislamiento es un obstáculo a superar.</code></pre>
                             <p class="question">P: "¿Cómo depuro esto cuando falla a mitad del pipeline?"</p>
                             <p class="answer"><strong>R:</strong> Ahí está el costo real de teams y vale la pena admitirlo en clase: cada agent tiene su propio transcript y el flujo no pasa por un punto central. Por eso el <code>summary</code> de <code>SendMessage</code> importa — es tu traza. Y por eso el patrón de dead-letter queue existe: un mensaje que nadie procesa desaparece en silencio si no lo capturas.</p>
                         </div>
+
+                        <div class="qa-item">
+                            <p class="question">P: "Ya creé los 4 agents y el skill. ¿Cómo lo corro?"</p>
+                            <p class="answer"><strong>R:</strong> <code>/run-pipeline</code>. Y aprovecha para aclarar la confusión más común del tema: el bloque <code>javascript</code> del SKILL.md <strong>no es código que se ejecute</strong>. Un skill son instrucciones para el agente principal — Claude lo lee y hace las llamadas reales. Nadie interpreta ese JavaScript.</p>
+                        </div>
+
+                        <div class="qa-item">
+                            <p class="question">P: "<code>ListAgents</code> me dice 'No reachable agents'. ¿Configuré algo mal?"</p>
+                            <p class="answer"><strong>R:</strong> No, es correcto. Los <code>.md</code> son <strong>definiciones</strong> (agent types), no procesos. <code>ListAgents</code> lista <strong>instancias vivas</strong>; si no lanzaste ninguna, está vacío. Para ver las definiciones cargadas: <code>/agents</code>. Es la distinción que más cuesta y conviene provocarla con una pregunta antes de correr nada.</p>
+                        </div>
+
+                        <div class="qa-item">
+                            <p class="question">P: "Mi extractor dice 'no reachable' al enviar a transformer, y sí lo tengo en <code>teammates</code>."</p>
+                            <p class="answer"><strong>R:</strong> Está bien configurado; el problema es el modelo mental. <code>teammates:</code> <strong>no crea rutas de mensajería</strong> — los 4 agents son hermanos, hijos del principal, no peers. Además ninguno espera: cada uno ejecuta su prompt y termina, así que cuando el extractor (60s) va a notificar, los otros (12s) ya salieron. La solución es que cada agent <strong>devuelva su payload JSON</strong> y el principal lo releve por <code>agentId</code>.</p>
+                        </div>
+
+                        <div class="qa-item">
+                            <p class="question">P: "Entonces, ¿el peer-to-peer del Tema 8 no existe?"</p>
+                            <p class="answer"><strong>R:</strong> Existe, pero no donde el tema lo pone. <code>SendMessage</code> entre peers funciona <strong>entre sesiones</strong> de Claude Code (dos terminales, o sesiones en la nube — se descubren con <code>ListAgents</code> cross-session). Entre subagents de una misma sesión, no. Es una distinción honesta que vale más que el ejercicio: <em>sepan qué garantía tienen antes de diseñar sobre ella</em>.</p>
+                        </div>
+
+                        <div class="qa-item">
+                            <p class="question">P: "Envié el mensaje, dijo 'queued', y el agent nunca lo procesó."</p>
+                            <p class="answer"><strong>R:</strong> <strong>Encolado ≠ entregado.</strong> Un mensaje a un agent vivo se entrega "at its next tool round"; si el agent termina su turno antes de ese round, el mensaje se queda sin consumir. Nos pasó con el quality-checker: validó dos etapas y terminó diciendo "awaiting VERIFY_LOAD" con el mensaje encolado. Hubo que reenviarlo. <span class="emphasis">Este es exactamente el agujero que justifica la dead-letter queue del Tip Avanzado</span> — buen momento para conectarlo.</p>
+                        </div>
                     </div>
 
                     <div class="script-section">
@@ -2119,8 +2205,10 @@ PIERDE cuando el aislamiento es un obstáculo a superar.</code></pre>
                             <li>Crear <code>.claude/agents/extractor.md</code> con SendMessage a transformer</li>
                             <li>Crear <code>.claude/agents/transformer.md</code> con teammates configurado</li>
                             <li>Crear <code>.claude/agents/quality-checker.md</code> con <code>authority: can-block</code> <em>y sin <code>Write</code> en tools</em> — que noten que la segunda restricción es la que de verdad se impone</li>
-                            <li>Enviar primer message a extractor via SendMessage desde un skill</li>
-                            <li>Verificar que el flujo completo funciona (E → T → QC)</li>
+                            <li>Generar los datos con <code>./generar-datos-muestra.sh .</code></li>
+                            <li>Crear el skill <code>run-pipeline</code> — con <code>subagent_type</code> (no <code>agentType</code>) y <code>JSON.stringify</code></li>
+                            <li>Correr <code>/run-pipeline</code> y observar que los agents downstream terminan sin recibir nada</li>
+                            <li>Comprobar los 4 niveles: <code>/agents</code> · <code>ListAgents</code> · conteos en disco · veredicto del quality-checker</li>
                         </ol>
                     </div>
 

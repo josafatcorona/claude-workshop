@@ -430,6 +430,11 @@ realmente los agents.
 `teammates`. Cualquier otra clave —`authority` incluida— se ignora silenciosamente al cargar
 el agent.
 
+> **Matiz importante sobre `teammates` (comprobado en el Paso 8):** aunque se carga, **no
+> crea rutas de mensajería**. Un `SendMessage` de un agent a otro listado en sus `teammates`
+> falla con `"no reachable"` si ambos son subagents hermanos de la misma sesión. Para la
+> mensajería, `teammates:` es tan convencional como `authority:`.
+
 Compruébalo tú mismo: pídele a Claude que liste los agents disponibles. Verás
 `quality-checker` con su description, sus tools y su model. De `authority` no queda rastro.
 
@@ -630,25 +635,27 @@ Este skill inicia y coordina el pipeline de datos.
 Primero, inicia todos los agents del team usando el Agent tool:
 
 \`\`\`javascript
-// Iniciar los 4 agents del team
+// Iniciar los 4 agents del team.
+// OJO: el parametro es `subagent_type`, no `agentType`.
+// Lanzalos en UN SOLO mensaje (varias tool calls en paralelo).
 const extractor = await Agent({
   description: "Extractor agent for data pipeline",
-  agentType: "extractor"
+  subagent_type: "extractor"
 })
 
 const transformer = await Agent({
-  description: "Transformer agent for data pipeline", 
-  agentType: "transformer"
+  description: "Transformer agent for data pipeline",
+  subagent_type: "transformer"
 })
 
 const loader = await Agent({
   description: "Loader agent for data pipeline",
-  agentType: "loader"
+  subagent_type: "loader"
 })
 
 const qualityChecker = await Agent({
   description: "Quality checker for data pipeline",
-  agentType: "quality-checker"
+  subagent_type: "quality-checker"
 })
 \`\`\`
 
@@ -658,14 +665,15 @@ Envía el primer mensaje al extractor:
 \`\`\`javascript
 SendMessage({
   to: "extractor",
-  message: {
-    "action": "START",
-    "config": {
-      "source": "sample_data.csv",
-      "type": "csv"
+  summary: "START: extraer ventas_2024.csv",
+  message: JSON.stringify({
+    action: "START",
+    config: {
+      source: "data/ventas_2024.csv",
+      type: "csv"
     },
-    "instructions": "Extract all rows and pass to transformer"
-  }
+    instructions: "Extract all rows and pass to transformer"
+  })
 })
 \`\`\`
 
@@ -690,6 +698,175 @@ SendMessage({
 })
 \`\`\`
 ```
+```
+
+---
+
+## Paso 8: Ejecutar el Flujo Final — y Qué Pasa de Verdad
+
+Ya tienes los 4 agents y el skill. **¿Cómo lo corres?**
+
+```
+/run-pipeline
+```
+
+Eso es todo. Y aquí conviene detenerse, porque el bloque ```javascript``` del SKILL.md
+**no es código que se ejecute**. Un skill son *instrucciones para el agente principal*: Claude
+lee el SKILL.md y hace las llamadas reales a `Agent(...)` y `SendMessage(...)`. Nadie
+interpreta ese JavaScript.
+
+### Antes de correr: prepara los datos
+
+```bash
+./generar-datos-muestra.sh .        # crea data/ventas_2024.csv y output/
+```
+
+### Dos erratas del Paso 7 que hay que corregir para que funcione
+
+| En el ejemplo | Correcto |
+|---|---|
+| `agentType: "extractor"` | `subagent_type: "extractor"` |
+| `message: { ... }` | `message: JSON.stringify({ ... })` |
+
+La segunda contradice el propio Paso 7 — la Nota Previa ya avisó que `message` es un string.
+
+---
+
+### Lo que descubres al correrlo (y el tema debe admitir)
+
+Este ejercicio se ejecutó de verdad. El resultado importa más que el pipeline:
+
+**1. `ListAgents` vacío no es un error.** Antes de lanzar nada:
+
+```
+No reachable agents
+```
+
+Los `.md` de `.claude/agents/` son **definiciones** (agent *types*), no procesos. `ListAgents`
+lista **instancias vivas**. Para ver las definiciones cargadas: `/agents`.
+
+**2. Un agent NO espera mensajes.** No existe primitiva de espera. Al lanzar los 4 en
+paralelo, tres terminaron en ~12 segundos sin hacer nada:
+
+```
+transformer      → "no he recibido START_TRANSFORM"   → termina
+loader           → "no he recibido START_LOAD"        → termina
+quality-checker  → "aguardando mensajes"              → termina
+extractor        → (62s: leer, contar, copiar)        → intenta notificar...
+```
+
+Cuando el extractor fue a notificar, ya no quedaba nadie. **"Escuchar mensaje de extractor"
+—Pasos 2 y 3— no es algo que un agent pueda hacer.**
+
+**3. Los teammates no son alcanzables entre sí.** El extractor obtuvo:
+
+```
+SendMessage a "transformer"      → No agent named 'transformer' is reachable
+SendMessage a "quality-checker"  → No agent named 'quality-checker' is reachable
+```
+
+Y esto es lo importante: **`teammates:` en el frontmatter no crea rutas de mensajería.** Cae
+en la misma categoría que `authority: can-block` — convención documental. Los 4 agents son
+*hermanos*, hijos del agente principal, no peers entre sí.
+
+> Corrección al Paso 4: ese apartado dice que Claude Code interpreta `teammates`. Para la
+> mensajería entre subagents hermanos, **no lo hace**. La única autoridad real del
+> frontmatter sigue siendo `tools:`.
+
+**4. El nombre del type no es una dirección.** Incluso desde el agente principal:
+
+```
+SendMessage({to: "transformer", ...})       → No agent named 'transformer' is reachable
+SendMessage({to: "a18048adb026a856f", ...}) → Resuming agent a18048a   ✓
+```
+
+Hay que usar el **`agentId` de la instancia**, que devuelve el spawn. Y nota `Resuming`: un
+agent terminado **sigue siendo reanudable** desde su transcript. Eso es lo que hace viable el
+pipeline.
+
+**5. Encolado ≠ entregado.** Un mensaje a un agent *vivo* responde
+`Message queued for delivery at its next tool round`. Si el agent termina su turno antes de
+ese round, **el mensaje no se procesa**: nuestro quality-checker validó dos etapas y terminó
+diciendo "awaiting VERIFY_LOAD" con el mensaje encolado sin consumir. Hubo que reenviarlo.
+Este es exactamente el agujero que justifica el patrón *dead letter queue* del Tip Avanzado.
+
+---
+
+### El patrón que sí funciona: relevo por el padre
+
+Los agents no se hablan entre sí; **el agente principal releva cada payload** al siguiente,
+por `agentId`:
+
+```
+extractor  ──payload──►  [principal]  ──SendMessage(agentId)──►  transformer
+transformer ─payload──►  [principal]  ──SendMessage(agentId)──►  loader
+loader ─────payload──►  [principal]  ──SendMessage(agentId)──►  quality-checker
+```
+
+Para que el relevo sea posible, cada agent debe **devolver en su resultado final el payload
+JSON** que le habría enviado al siguiente, en vez de intentar un `SendMessage` que fallará.
+Añade esto al body de cada agent:
+
+```markdown
+## Notificación
+
+Tus teammates NO son alcanzables desde tu contexto (`SendMessage` a ellos falla con
+"no reachable" — son agents hermanos, no tus subagents). NO intentes enviarles mensajes.
+Devuelve en tu resultado final el payload JSON destinado al siguiente agent; el coordinador
+lo releva.
+```
+
+**Sí, esto es hub-and-spoke — el Tema 7.** Reconocerlo es la lección: el peer-to-peer entre
+subagents hermanos no está disponible por esta vía. `SendMessage` entre peers **sí** funciona
+entre *sesiones* de Claude Code (ver `ListAgents` cross-session), no entre subagents de una
+misma sesión.
+
+---
+
+### Resultado esperado end-to-end
+
+```
+etapa            filas   artefacto
+─────────────────────────────────────────────────────────
+extracción         12    /tmp/extracted_data.csv
+transformación     11    /tmp/transformed_data.csv     (descarta 1: cantidad vacía)
+carga              11    output/ventas_cargadas.csv    (+ columna total)
+```
+
+La fila descartada es el valor faltante sembrado a propósito en `ventas_2024.csv`. Fuerza una
+decisión real del quality-checker: su regla dice *"ninguna pérdida de datos"*, pero el dato es
+irrecuperable. Nuestro quality-checker dio **PASSED** con la justificación de que `cantidad`
+es necesaria para GMV y no se puede imputar sin arbitrariedad — y dejó nota de que producción
+necesita una política explícita de imputación vs. descarte. Ese razonamiento *es* el
+entregable del ejercicio, no el CSV.
+
+### Cómo comprobarlo — 4 niveles
+
+```bash
+# 1. Definiciones cargadas        → /agents      (los 4, con model y tools)
+# 2. Instancias vivas             → ListAgents   (running / completed)
+# 3. Artefactos y conteos
+wc -l /tmp/extracted_data.csv /tmp/transformed_data.csv output/ventas_cargadas.csv
+# 4. Veredicto del quality-checker: PASSED o BLOCK por cada etapa
+```
+
+Para el nivel 3, que los conteos cuadren: `extraídas ≥ transformadas == cargadas`.
+
+### Variante: ver un BLOCK de verdad
+
+El quality-checker exige "row count entre 100-10000" y el dataset tiene 12 filas. Tal cual,
+**bloquea** — y eso comprueba el ítem "Bloqueos de quality-checker detienen el pipeline". Para
+el camino feliz, baja el rango a `5-10000` en `quality-checker.md`.
+
+### Variante: transformaciones con efecto real
+
+Con `ventas_2024.csv`, el transformer reporta `removed_duplicates` y `normalized_dates`… y
+ninguna hace nada (ya está en ISO, sin duplicados). Para que el pipeline haga trabajo
+observable, usa el dataset sucio que genera el script:
+
+```
+data/ventas_2024_dirty.csv   17 filas → 14 tras limpiar
+                             3 formatos de fecha, 2 duplicados exactos, 2 valores vacíos
 ```
 
 ---
@@ -819,10 +996,11 @@ sabe, es señal de que ese trabajo pertenecía a un solo agent.
 - [ ] Quality-checker monitorea todas las etapas
 - [ ] Quality-checker puede BLOQUEAR si hay problemas
 
-### Comunicación Peer-to-Peer
-- [ ] SendMessage funciona entre agents
-- [ ] Cada agent conoce sus teammates (en frontmatter)
-- [ ] Mensajes incluyen contexto suficiente para siguiente agent
+### Comunicación
+- [ ] `teammates:` documentado en el frontmatter de cada agent
+- [ ] Comprobé que `SendMessage` entre agents hermanos falla con "no reachable"
+- [ ] Cada agent devuelve su payload JSON en el resultado final, para que el principal releve
+- [ ] Mensajes incluyen contexto suficiente para el siguiente agent
 - [ ] Handoff protocol implementado (opcional — ver Paso 5)
 
 ### Comprensión Conceptual
@@ -831,12 +1009,18 @@ sabe, es señal de que ese trabajo pertenecía a un solo agent.
 - [ ] Entiendo que `authority:` es convención cooperativa, no enforcement
 - [ ] Sé que `tools:` es la única autoridad real del frontmatter
 - [ ] Puedo nombrar 2 casos de desarrollo donde un team gana, y 2 donde no
+- [ ] Sé que `teammates:` tampoco crea rutas de mensajería — es convención, como `authority:`
+- [ ] Distingo definición de agent (`.md`, se ve con `/agents`) de instancia viva (`ListAgents`)
+- [ ] Sé que un agent no espera mensajes: ejecuta su prompt y termina (pero queda reanudable)
+- [ ] Sé que el `agentId`, no el nombre del type, es la dirección de un subagent
 
 ### Prueba End-to-End
-- [ ] Skill run-pipeline creado y funcional
-- [ ] Pipeline completo funciona (extract → transform → load → validate)
+- [ ] Datos de muestra generados con `./generar-datos-muestra.sh`
+- [ ] Skill run-pipeline creado, con `subagent_type` y `JSON.stringify` corregidos
+- [ ] Corrí `/run-pipeline` y el pipeline completó (extract → transform → load → validate)
+- [ ] Conteos verificados en disco: extraídas ≥ transformadas == cargadas
 - [ ] Errores son capturados y reportados
-- [ ] Bloqueos de quality-checker detienen el pipeline
+- [ ] Vi un BLOCK del quality-checker detener el pipeline (rango de filas sin ajustar)
 
 ## Recursos Adicionales
 

@@ -1950,7 +1950,120 @@ SendMessage({
 })
 ```</code><button class="copy-btn">Copiar</button></pre>
 
-                        <p>Desde allí, <strong>la cadena de comunicación se auto-ejecuta</strong>: extractor → transformer → loader → quality-checker</p>
+                        <p>Desde allí, <strong>la cadena NO se auto-ejecuta</strong>: los agents no se alcanzan entre sí. El agente principal releva cada payload al siguiente — ver el Paso 8.</p>
+                    </div>
+                </div>
+
+                <div class="collapsible">
+                    <div class="collapsible-header">
+                        <h3>▶️ Paso 8: Ejecutar el Flujo Final — y Qué Pasa de Verdad</h3>
+                        <span class="collapsible-icon">▼</span>
+                    </div>
+                    <div class="collapsible-content">
+                        <p>Ya tienes los 4 agents y el skill. <strong>¿Cómo lo corres?</strong></p>
+
+                        <pre><code>/run-pipeline</code><button class="copy-btn">Copiar</button></pre>
+
+                        <div class="info-box">
+                            <strong>📌 El JavaScript del SKILL.md no se ejecuta</strong>
+                            <p>Un skill son <em>instrucciones para el agente principal</em>: Claude lee el SKILL.md y hace las llamadas reales a <code>Agent(...)</code> y <code>SendMessage(...)</code>. Nadie interpreta ese bloque de código — es pseudocódigo que describe el protocolo.</p>
+                        </div>
+
+                        <h4>Antes de correr: prepara los datos</h4>
+                        <pre><code>./generar-datos-muestra.sh .    # crea data/ventas_2024.csv y output/</code><button class="copy-btn">Copiar</button></pre>
+
+                        <h4>Dos erratas del Paso 7 que hay que corregir</h4>
+                        <table>
+                            <thead><tr><th>En el ejemplo</th><th>Correcto</th></tr></thead>
+                            <tbody>
+                                <tr><td><code>agentType: "extractor"</code></td><td><code>subagent_type: "extractor"</code></td></tr>
+                                <tr><td><code>message: { ... }</code></td><td><code>message: JSON.stringify({ ... })</code></td></tr>
+                            </tbody>
+                        </table>
+
+                        <h4>Lo que descubres al correrlo</h4>
+                        <p>Este ejercicio se ejecutó de verdad. <strong>El resultado importa más que el pipeline.</strong></p>
+
+                        <p><strong>1. <code>ListAgents</code> vacío no es un error.</strong> Antes de lanzar nada devuelve <code>No reachable agents</code>. Los <code>.md</code> de <code>.claude/agents/</code> son <strong>definiciones</strong> (agent <em>types</em>), no procesos. <code>ListAgents</code> lista <strong>instancias vivas</strong>; para ver las definiciones cargadas usa <code>/agents</code>.</p>
+
+                        <div class="warning-box">
+                            <strong>⚠️ 2. Un agent NO espera mensajes</strong>
+                            <p>No existe primitiva de espera. Al lanzar los 4 en paralelo, tres terminaron en ~12 segundos sin hacer nada:</p>
+                            <pre><code>transformer      → "no he recibido START_TRANSFORM"   → termina
+loader           → "no he recibido START_LOAD"        → termina
+quality-checker  → "aguardando mensajes"              → termina
+extractor        → (62s: leer, contar, copiar)        → intenta notificar...</code></pre>
+                            <p>Cuando el extractor fue a notificar, <strong>ya no quedaba nadie</strong>. "Escuchar mensaje de extractor" (Pasos 2 y 3) no es algo que un agent pueda hacer.</p>
+                        </div>
+
+                        <p><strong>3. Los teammates no son alcanzables entre sí.</strong> El extractor obtuvo:</p>
+                        <pre><code>SendMessage a "transformer"      → No agent named 'transformer' is reachable
+SendMessage a "quality-checker"  → No agent named 'quality-checker' is reachable</code></pre>
+
+                        <div class="warning-box">
+                            <strong>⚠️ Corrección al Paso 4</strong>
+                            <p><code>teammates:</code> <strong>no crea rutas de mensajería.</strong> Cae en la misma categoría que <code>authority: can-block</code> — convención documental. Los 4 agents son <em>hermanos</em>, hijos del agente principal, no peers entre sí. La única autoridad real del frontmatter sigue siendo <code>tools:</code>.</p>
+                        </div>
+
+                        <p><strong>4. El nombre del type no es una dirección.</strong> Incluso desde el agente principal:</p>
+                        <pre><code>SendMessage({to: "transformer", ...})       → No agent named 'transformer' is reachable
+SendMessage({to: "a18048adb026a856f", ...}) → Resuming agent a18048a   ✓</code></pre>
+                        <p>Hay que usar el <strong><code>agentId</code> de la instancia</strong>, que devuelve el spawn. Y nota <code>Resuming</code>: un agent terminado <strong>sigue siendo reanudable</strong> desde su transcript. Eso es lo que hace viable el pipeline.</p>
+
+                        <p><strong>5. Encolado ≠ entregado.</strong> Un mensaje a un agent <em>vivo</em> responde <code>Message queued for delivery at its next tool round</code>. Si el agent termina su turno antes de ese round, <strong>el mensaje no se procesa</strong>: nuestro quality-checker validó dos etapas y terminó diciendo "awaiting VERIFY_LOAD" con el mensaje encolado sin consumir. Hubo que reenviarlo. Este es exactamente el agujero que justifica el patrón <em>dead letter queue</em> del Tip Avanzado.</p>
+
+                        <h4>El patrón que sí funciona: relevo por el padre</h4>
+                        <p>Los agents no se hablan entre sí; <strong>el agente principal releva cada payload</strong> al siguiente, por <code>agentId</code>:</p>
+                        <pre><code>extractor   ──payload──►  [principal]  ──SendMessage(agentId)──►  transformer
+transformer ──payload──►  [principal]  ──SendMessage(agentId)──►  loader
+loader      ──payload──►  [principal]  ──SendMessage(agentId)──►  quality-checker</code></pre>
+
+                        <p>Para que el relevo sea posible, cada agent debe <strong>devolver en su resultado final el payload JSON</strong> que le habría enviado al siguiente, en vez de intentar un <code>SendMessage</code> que fallará. Añade esto al body de cada agent:</p>
+                        <pre><code>## Notificación
+
+Tus teammates NO son alcanzables desde tu contexto (`SendMessage` a ellos falla
+con "no reachable" — son agents hermanos, no tus subagents). NO intentes
+enviarles mensajes. Devuelve en tu resultado final el payload JSON destinado al
+siguiente agent; el coordinador lo releva.</code><button class="copy-btn">Copiar</button></pre>
+
+                        <div class="golden-rule">
+                            <h4>📜 Lo que se llevan de este paso</h4>
+                            <pre><code>Sí, esto es hub-and-spoke — el Tema 7.
+Reconocerlo ES la lección.
+
+El peer-to-peer entre subagents hermanos no está
+disponible por esta vía. SendMessage entre peers SÍ
+funciona entre SESIONES de Claude Code (ListAgents
+cross-session), no entre subagents de una misma sesión.</code></pre>
+                        </div>
+
+                        <h4>Resultado esperado end-to-end</h4>
+                        <pre><code>etapa            filas   artefacto
+─────────────────────────────────────────────────────────
+extracción         12    /tmp/extracted_data.csv
+transformación     11    /tmp/transformed_data.csv   (descarta 1: cantidad vacía)
+carga              11    output/ventas_cargadas.csv  (+ columna total)</code></pre>
+
+                        <div class="tip-box">
+                            <strong>💡 La fila descartada es el entregado real</strong>
+                            <p>El valor faltante está sembrado a propósito en <code>ventas_2024.csv</code>. Fuerza una decisión del quality-checker: su regla dice <em>"ninguna pérdida de datos"</em>, pero el dato es irrecuperable. El nuestro dio <strong>PASSED</strong> argumentando que <code>cantidad</code> es necesaria para GMV y no se puede imputar sin arbitrariedad — y dejó nota de que producción necesita una política explícita de imputación vs. descarte. <strong>Ese razonamiento es el entregable del ejercicio, no el CSV.</strong></p>
+                        </div>
+
+                        <h4>Cómo comprobarlo — 4 niveles</h4>
+                        <pre><code># 1. Definiciones cargadas   → /agents      (los 4, con model y tools)
+# 2. Instancias vivas        → ListAgents   (running / completed)
+# 3. Artefactos y conteos
+wc -l /tmp/extracted_data.csv /tmp/transformed_data.csv output/ventas_cargadas.csv
+# 4. Veredicto del quality-checker: PASSED o BLOCK por cada etapa</code><button class="copy-btn">Copiar</button></pre>
+                        <p>Para el nivel 3, que los conteos cuadren: <code>extraídas ≥ transformadas == cargadas</code>.</p>
+
+                        <h4>Variante: ver un BLOCK de verdad</h4>
+                        <p>El quality-checker exige "row count entre 100-10000" y el dataset tiene 12 filas. Tal cual, <strong>bloquea</strong> — y eso comprueba el ítem "Bloqueos de quality-checker detienen el pipeline". Para el camino feliz, baja el rango a <code>5-10000</code> en <code>quality-checker.md</code>.</p>
+
+                        <h4>Variante: transformaciones con efecto real</h4>
+                        <p>Con <code>ventas_2024.csv</code>, el transformer reporta <code>removed_duplicates</code> y <code>normalized_dates</code>… y ninguna hace nada (ya está en ISO, sin duplicados). Para que el pipeline haga trabajo observable, usa el dataset sucio que genera el script:</p>
+                        <pre><code>data/ventas_2024_dirty.csv   17 filas → 14 tras limpiar
+                             3 formatos de fecha, 2 duplicados exactos, 2 valores vacíos</code></pre>
                     </div>
                 </div>
 
@@ -2085,11 +2198,12 @@ SendMessage({
                     <li><input type="checkbox" data-topic="8"> Quality-checker puede BLOQUEAR si hay problemas</li>
                 </ul>
 
-                <p><strong>Comunicación Peer-to-Peer</strong></p>
+                <p><strong>Comunicación</strong></p>
                 <ul class="checklist">
-                    <li><input type="checkbox" data-topic="8"> SendMessage funciona entre agents</li>
-                    <li><input type="checkbox" data-topic="8"> Cada agent conoce sus teammates (en frontmatter)</li>
-                    <li><input type="checkbox" data-topic="8"> Mensajes incluyen contexto suficiente para siguiente agent</li>
+                    <li><input type="checkbox" data-topic="8"> <code>teammates:</code> documentado en el frontmatter de cada agent</li>
+                    <li><input type="checkbox" data-topic="8"> Comprobé que <code>SendMessage</code> entre agents hermanos falla con "no reachable"</li>
+                    <li><input type="checkbox" data-topic="8"> Cada agent devuelve su payload JSON en el resultado final, para que el principal releve</li>
+                    <li><input type="checkbox" data-topic="8"> Mensajes incluyen contexto suficiente para el siguiente agent</li>
                     <li><input type="checkbox" data-topic="8"> Handoff protocol implementado (opcional — ver Paso 5)</li>
                 </ul>
 
@@ -2100,14 +2214,20 @@ SendMessage({
                     <li><input type="checkbox" data-topic="8"> Entiendo que <code>authority:</code> es convención cooperativa, no enforcement</li>
                     <li><input type="checkbox" data-topic="8"> Sé que <code>tools:</code> es la única autoridad real del frontmatter</li>
                     <li><input type="checkbox" data-topic="8"> Puedo nombrar 2 casos de desarrollo donde un team gana, y 2 donde no</li>
+                    <li><input type="checkbox" data-topic="8"> Sé que <code>teammates:</code> tampoco crea rutas de mensajería — es convención, como <code>authority:</code></li>
+                    <li><input type="checkbox" data-topic="8"> Distingo definición de agent (<code>.md</code>, se ve con <code>/agents</code>) de instancia viva (<code>ListAgents</code>)</li>
+                    <li><input type="checkbox" data-topic="8"> Sé que un agent no espera mensajes: ejecuta su prompt y termina (pero queda reanudable)</li>
+                    <li><input type="checkbox" data-topic="8"> Sé que el <code>agentId</code>, no el nombre del type, es la dirección de un subagent</li>
                 </ul>
 
                 <p><strong>Prueba End-to-End</strong></p>
                 <ul class="checklist">
-                    <li><input type="checkbox" data-topic="8"> Skill run-pipeline creado y funcional</li>
-                    <li><input type="checkbox" data-topic="8"> Pipeline completo funciona (extract → transform → load → validate)</li>
+                    <li><input type="checkbox" data-topic="8"> Datos de muestra generados con <code>./generar-datos-muestra.sh</code></li>
+                    <li><input type="checkbox" data-topic="8"> Skill run-pipeline creado, con <code>subagent_type</code> y <code>JSON.stringify</code> corregidos</li>
+                    <li><input type="checkbox" data-topic="8"> Corrí <code>/run-pipeline</code> y el pipeline completó (extract → transform → load → validate)</li>
+                    <li><input type="checkbox" data-topic="8"> Conteos verificados en disco: extraídas ≥ transformadas == cargadas</li>
                     <li><input type="checkbox" data-topic="8"> Errores son capturados y reportados</li>
-                    <li><input type="checkbox" data-topic="8"> Bloqueos de quality-checker detienen el pipeline</li>
+                    <li><input type="checkbox" data-topic="8"> Vi un BLOCK del quality-checker detener el pipeline (rango de filas sin ajustar)</li>
                 </ul>
 
                 <div class="info-box">
