@@ -344,3 +344,88 @@ triggers:
     event: "afterWrite"
 ---
 ```
+
+---
+
+## Bonus: `skill-creator` — un skill para crear skills
+
+Hasta aquí escribiste los SKILL.md a mano, que es exactamente lo que hay que hacer la primera
+vez: se aprende la anatomía del archivo. A partir de la tercera o cuarta skill, conviene
+delegar el andamiaje.
+
+### Qué es
+
+`skill-creator` es un **plugin oficial de Anthropic** que aporta una skill del mismo nombre.
+No genera un SKILL.md y se va: te lleva por el ciclo completo de construcción.
+
+| Fase | Qué hace |
+|---|---|
+| **Entrevista** | Te pregunta qué debe hacer la skill, con qué frases debe dispararse y qué output esperas |
+| **Borrador** | Escribe el SKILL.md con la estructura correcta (frontmatter, pasos, output) |
+| **Test prompts** | Propone casos de prueba y los corre contra la skill |
+| **Evaluación** | Trae scripts propios para medir resultados y comparar iteraciones |
+| **Afinado de `description`** | Optimiza la línea que decide **cuándo se dispara** la skill — el punto que más falla en la práctica |
+
+Ese último punto es el que justifica la herramienta. Una `description` mal escrita produce una
+skill que existe pero nunca se invoca, o que se invoca cuando no toca.
+
+### Cómo se instala
+
+El marketplace oficial ya viene registrado en Claude Code, así que es un comando:
+
+```
+/plugin install skill-creator@claude-plugins-official
+```
+
+Alternativa interactiva: `/plugin` → *Browse marketplaces* → `claude-plugins-official` →
+`skill-creator`.
+
+Para comprobar que quedó activo:
+
+```
+/plugin          # aparece en la lista de instalados
+```
+
+### Cómo se usa
+
+No trae slash commands propios. Se activa **por descripción de intención**:
+
+```
+Crea una skill que valide los CSV de data/ antes de procesarlos
+Mejora la description de mi skill analyze-csv, casi nunca se dispara
+Corre evals sobre gen-tests y dime dónde falla
+```
+
+O invocándola de forma explícita:
+
+```
+/skill-creator:skill-creator
+```
+
+> **Convención de nombres:** las skills que vienen de un plugin se invocan como
+> `plugin:skill`. Por eso el doble nombre — el plugin se llama `skill-creator` y la skill
+> dentro de él también.
+
+### Plugin hermano: `plugin-dev`
+
+Si además de skills quieres empaquetar hooks, agents, comandos o servers MCP —es decir, todo
+lo que verás de los Temas 4 al 9— el paquete es:
+
+```
+/plugin install plugin-dev@claude-plugins-official
+```
+
+Aporta 8 skills (`skill-development`, `hook-development`, `command-development`,
+`agent-development`, `mcp-integration`, `plugin-structure`, `plugin-settings`,
+`create-plugin`) y tres agents, entre ellos `skill-reviewer`, que revisa una skill ya escrita
+y sugiere mejoras.
+
+**Regla práctica para elegir:** `skill-creator` para *construir y medir* una skill;
+`plugin-dev` para *empaquetar y distribuir* un conjunto de piezas.
+
+### Cuándo NO usarlo
+
+- **Tu primera skill.** Escríbela a mano. Si delegas el andamiaje antes de entender el
+  frontmatter, luego no sabes depurar por qué no se dispara.
+- **Skills de 10 líneas.** El ciclo de evals cuesta más que la skill.
+- Su valor aparece con skills que otros van a usar, o cuando el disparo automático importa.

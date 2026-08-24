@@ -1132,6 +1132,35 @@ Genera un resumen estructurado con métricas clave.</code></pre>
                         <p><strong>💡 Momento de práctica:</strong> Pide a los participantes que creen un skill simple, por ejemplo <code>/list-files</code> que liste archivos de un directorio. Dale 3-4 minutos.</p>
                     </div>
 
+                    <div class="script-section">
+                        <span class="script-label instructor">Cierre opcional (2 min): <code>skill-creator</code></span>
+
+                        <div class="instructor-note">
+                            <p><strong>🎯 Cuándo darlo:</strong> solo si la práctica grupal fluyó y te sobran 2 minutos. Es un <em>bonus</em> del material del alumno, no contenido evaluable. Si vas justo, di la frase de cierre y sigue — está escrito en el tema para que lo lean después.</p>
+                        </div>
+
+                        <div class="speech">
+                            <p>"Acaban de escribir un SKILL.md a mano, y eso es <span class="emphasis">exactamente</span> lo que había que hacer la primera vez: ahora conocen la anatomía del archivo. Pero a partir de la tercera o cuarta skill, ese andamiaje se delega. Hay un plugin oficial de Anthropic, <code>skill-creator</code>, que es literalmente <span class="emphasis">una skill para crear skills</span>."</p>
+                        </div>
+
+                        <p><strong>Los tres datos que se llevan (no más):</strong></p>
+                        <ul>
+                            <li><strong>Qué es</strong> — no solo escribe el <code>SKILL.md</code>: te entrevista, propone casos de prueba, corre evals y <strong>afina la <code>description</code></strong>.</li>
+                            <li><strong>Cómo se instala</strong> — <code>/plugin install skill-creator@claude-plugins-official</code>. El marketplace oficial ya viene registrado, así que es un solo comando.</li>
+                            <li><strong>Cómo se usa</strong> — se dispara por intención ("crea una skill que…", "mejora la description de…"), o explícitamente con <code>/skill-creator:skill-creator</code>.</li>
+                        </ul>
+
+                        <div class="instructor-note">
+                            <p><strong>💡 El punto que de verdad importa — dilo aunque recortes todo lo demás:</strong> lo que más falla en una skill real no es el cuerpo, es la <code>description</code>. Si está mal escrita, la skill <em>existe pero nunca se invoca</em> — o se invoca cuando no toca. <span class="emphasis">Eso</span> es lo que <code>skill-creator</code> optimiza con evals, y es la razón de instalarlo.</p>
+                        </div>
+
+                        <div class="instructor-note">
+                            <p><strong>⚠️ Anticipa la pregunta "¿y por qué no lo usamos desde el principio?"</strong> Respuesta corta: <em>"porque no sabrían depurarlo."</em> Si delegas el andamiaje antes de entender el frontmatter, cuando la skill no se dispare no tienes modelo mental para arreglarla. Por eso el bonus va <strong>al final</strong> del tema, no al principio.</p>
+                        </div>
+
+                        <p><strong>Menciona el plugin hermano solo si preguntan:</strong> <code>plugin-dev</code> (<code>/plugin install plugin-dev@claude-plugins-official</code>) trae 8 skills que cubren hooks, comandos, agents y MCP —los Temas 4 al 9— más un agent <code>skill-reviewer</code>. Regla para elegir: <code>skill-creator</code> para <strong>construir y medir</strong> una skill; <code>plugin-dev</code> para <strong>empaquetar y distribuir</strong>.</p>
+                    </div>
+
                     <div class="qa-box">
                         <h5>❓ Preguntas Frecuentes</h5>
                         <div class="qa-item">
@@ -1141,6 +1170,10 @@ Genera un resumen estructurado con métricas clave.</code></pre>
                         <div class="qa-item">
                             <div class="question">¿Cómo paso múltiples argumentos?</div>
                             <div class="answer">Define múltiples argumentos en el frontmatter y úsalos como <code>{{arg1}}</code>, <code>{{arg2}}</code>.</div>
+                        </div>
+                        <div class="qa-item">
+                            <div class="question">¿Puedo usar la skill de <code>skill-creator</code> sin instalar el plugin?</div>
+                            <div class="answer">Sí. Una vez que el marketplace está registrado, la skill vive en <code>~/.claude/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/</code> y puedes copiar ese directorio a <code>.claude/skills/</code> del proyecto — así queda versionada con el repo y se invoca como <code>/skill-creator</code>. La diferencia: el plugin se actualiza con <code>/plugin</code>, la copia manual no.</div>
                         </div>
                     </div>
 

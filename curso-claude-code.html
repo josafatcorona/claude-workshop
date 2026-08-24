@@ -784,6 +784,61 @@ Genera un resumen estructurado.</code><button class="copy-btn">Copiar</button></
                     </div>
                 </div>
 
+                <div class="collapsible">
+                    <div class="collapsible-header">
+                        <h3>🎁 Bonus: <code>skill-creator</code> — un skill para crear skills</h3>
+                        <span class="collapsible-icon">▼</span>
+                    </div>
+                    <div class="collapsible-content">
+                        <p>Hasta aquí escribiste los <code>SKILL.md</code> a mano, que es exactamente lo que hay que hacer la primera vez: se aprende la anatomía del archivo. A partir de la tercera o cuarta skill, conviene delegar el andamiaje.</p>
+
+                        <h4>Qué es</h4>
+                        <p><code>skill-creator</code> es un <strong>plugin oficial de Anthropic</strong> que aporta una skill del mismo nombre. No genera un <code>SKILL.md</code> y se va: te lleva por el ciclo completo de construcción.</p>
+                        <table>
+                            <tr><th>Fase</th><th>Qué hace</th></tr>
+                            <tr><td><strong>Entrevista</strong></td><td>Te pregunta qué debe hacer la skill, con qué frases debe dispararse y qué output esperas</td></tr>
+                            <tr><td><strong>Borrador</strong></td><td>Escribe el <code>SKILL.md</code> con la estructura correcta (frontmatter, pasos, output)</td></tr>
+                            <tr><td><strong>Test prompts</strong></td><td>Propone casos de prueba y los corre contra la skill</td></tr>
+                            <tr><td><strong>Evaluación</strong></td><td>Trae scripts propios para medir resultados y comparar iteraciones</td></tr>
+                            <tr><td><strong>Afinado de <code>description</code></strong></td><td>Optimiza la línea que decide <strong>cuándo se dispara</strong> la skill — el punto que más falla en la práctica</td></tr>
+                        </table>
+                        <p>Ese último punto es el que justifica la herramienta. Una <code>description</code> mal escrita produce una skill que existe pero <strong>nunca se invoca</strong>, o que se invoca cuando no toca.</p>
+
+                        <h4>Cómo se instala</h4>
+                        <p>El marketplace oficial ya viene registrado en Claude Code, así que es un comando:</p>
+                        <pre><code>/plugin install skill-creator@claude-plugins-official</code><button class="copy-btn">Copiar</button></pre>
+                        <p>Alternativa interactiva: <code>/plugin</code> → <em>Browse marketplaces</em> → <code>claude-plugins-official</code> → <code>skill-creator</code>. Para comprobar que quedó activo, <code>/plugin</code> lo muestra en la lista de instalados.</p>
+
+                        <h4>Cómo se usa</h4>
+                        <p>No trae slash commands propios. Se activa <strong>por descripción de intención</strong>:</p>
+                        <pre><code>Crea una skill que valide los CSV de data/ antes de procesarlos
+Mejora la description de mi skill analyze-csv, casi nunca se dispara
+Corre evals sobre gen-tests y dime dónde falla</code><button class="copy-btn">Copiar</button></pre>
+                        <p>O invocándola de forma explícita:</p>
+                        <pre><code>/skill-creator:skill-creator</code><button class="copy-btn">Copiar</button></pre>
+
+                        <div class="info-box">
+                            <strong>💡 Convención de nombres</strong>
+                            <p>Las skills que vienen de un plugin se invocan como <code>plugin:skill</code>. Por eso el doble nombre — el plugin se llama <code>skill-creator</code> y la skill dentro de él también.</p>
+                        </div>
+
+                        <h4>Plugin hermano: <code>plugin-dev</code></h4>
+                        <p>Si además de skills quieres empaquetar hooks, agents, comandos o servers MCP —es decir, todo lo que verás de los Temas 4 al 9— el paquete es:</p>
+                        <pre><code>/plugin install plugin-dev@claude-plugins-official</code><button class="copy-btn">Copiar</button></pre>
+                        <p>Aporta 8 skills (<code>skill-development</code>, <code>hook-development</code>, <code>command-development</code>, <code>agent-development</code>, <code>mcp-integration</code>, <code>plugin-structure</code>, <code>plugin-settings</code>, <code>create-plugin</code>) y tres agents, entre ellos <code>skill-reviewer</code>, que revisa una skill ya escrita y sugiere mejoras.</p>
+                        <p><strong>Regla práctica para elegir:</strong> <code>skill-creator</code> para <em>construir y medir</em> una skill; <code>plugin-dev</code> para <em>empaquetar y distribuir</em> un conjunto de piezas.</p>
+
+                        <div class="warning-box">
+                            <strong>⚠️ Cuándo NO usarlo</strong>
+                            <ul>
+                                <li><strong>Tu primera skill.</strong> Escríbela a mano. Si delegas el andamiaje antes de entender el frontmatter, luego no sabes depurar por qué no se dispara.</li>
+                                <li><strong>Skills de 10 líneas.</strong> El ciclo de evals cuesta más que la skill.</li>
+                                <li>Su valor aparece con skills que otros van a usar, o cuando el disparo automático importa.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
                 <h2>✅ Checklist de Finalización</h2>
                 <ul class="checklist">
                     <li><input type="checkbox" data-topic="3"> Directorio .claude/skills/ creado</li>
